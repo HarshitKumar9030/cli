@@ -13,6 +13,7 @@ export const infraCommand = new Command('infra')
   .option('--python', 'Setup Python dependencies (uvicorn, gunicorn, etc.)')
   .option('--ssl', 'Setup SSL certificates with Certbot')
   .option('--service', 'Setup auto-restart service')
+  .option('--fix-nginx', 'Fix existing nginx configurations')
   .option('--all', 'Setup all infrastructure components')
   .action(async (options) => {
     try {
@@ -97,6 +98,19 @@ export const infraCommand = new Command('infra')
           }
         } catch (error) {
           console.log(chalk.red(`❌ Nginx setup failed: ${error}`));
+          hasErrors = true;
+        }
+        console.log();
+      }
+
+      // Fix nginx configurations
+      if (options.fixNginx) {
+        console.log(chalk.cyan('🔧 Fixing existing nginx configurations...'));
+        try {
+          await LocalDeploymentManager.fixNginxConfigurations();
+          console.log(chalk.green('✅ Nginx configurations fixed'));
+        } catch (error) {
+          console.log(chalk.red(`❌ Failed to fix nginx configurations: ${error}`));
           hasErrors = true;
         }
         console.log();

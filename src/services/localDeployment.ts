@@ -547,7 +547,7 @@ server {
     }
 
     # Redirect HTTP to HTTPS (will be enabled after SSL setup)
-    # return 301 https://\\$server_name\\$request_uri;
+    # return 301 https://$server_name$request_uri;
 
     # Proxy to local application
     location / {
@@ -558,19 +558,19 @@ server {
         proxy_http_version 1.1;
         
         # WebSocket support
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection \\$connection_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         
         # Standard proxy headers
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-        proxy_set_header X-Forwarded-Host \\$server_name;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $server_name;
         
         # Caching
-        proxy_cache_bypass \\$http_upgrade;
-        proxy_no_cache \\$http_upgrade;
+        proxy_cache_bypass $http_upgrade;
+        proxy_no_cache $http_upgrade;
         
         # Timeout settings (more aggressive for 522 prevention)
         proxy_connect_timeout 10s;
@@ -590,12 +590,6 @@ server {
         return 502 "Service temporarily unavailable. Please try again in a moment.";
         add_header Content-Type text/plain always;
     }
-}
-
-# WebSocket upgrade mapping
-map \\$http_upgrade \\$connection_upgrade {
-    default upgrade;
-    '' close;
 }
 `;
   }
@@ -659,9 +653,7 @@ map \\$http_upgrade \\$connection_upgrade {
     }
   }
 
-  /**
-   * Ensure main nginx configuration includes forge sites
-   */
+  // ensure main nginx conf includes forge files
   private static async ensureMainNginxConfig(): Promise<void> {
     const mainConfigPath = os.platform() === 'win32' 
       ? 'C:\\nginx\\conf\\nginx.conf'
@@ -669,39 +661,59 @@ map \\$http_upgrade \\$connection_upgrade {
     
     try {
       if (await fs.pathExists(mainConfigPath)) {
-        const config = await fs.readFile(mainConfigPath, 'utf8');
+        let config = await fs.readFile(mainConfigPath, 'utf8');
         const includePattern = os.platform() === 'win32'
           ? 'include forge-sites/*.conf;'
           : 'include /etc/nginx/sites-available/*.conf;';
         
-        const websocketMapping = `
+        let configChanged = false;
+        
+        // Add WebSocket upgrade mapping if not present
+        if (!config.includes('$connection_upgrade')) {
+          console.log(chalk.gray('Adding WebSocket mapping to nginx.conf'));
+          
+          // Find the http block and add the mapping after the opening brace
+          const httpMatch = config.match(/(http\s*{)/);
+          if (httpMatch) {
+            const websocketMapping = `
     # WebSocket upgrade mapping for Forge deployments
     map $http_upgrade $connection_upgrade {
         default upgrade;
         '' close;
     }`;
+            
+            config = config.replace(
+              httpMatch[1],
+              `${httpMatch[1]}${websocketMapping}`
+            );
+            configChanged = true;
+          }
+        }
         
-        if (!config.includes(includePattern) || !config.includes('$connection_upgrade')) {
-          console.log(chalk.gray('Adding forge sites include and WebSocket mapping to nginx.conf'));
+        // Add include directive if not present
+        if (!config.includes(includePattern)) {
+          console.log(chalk.gray('Adding forge sites include to nginx.conf'));
           
-          // Add include directive and WebSocket mapping in http block
-          let updatedConfig = config;
-          
-          if (!config.includes(includePattern)) {
-            updatedConfig = updatedConfig.replace(
-              /http\s*{/,
-              `http {\n    ${includePattern}`
+          // Find a good place to add the include - typically near other includes
+          const existingInclude = config.match(/include\s+[^;]+;/);
+          if (existingInclude) {
+            // Add after existing include
+            config = config.replace(
+              existingInclude[0],
+              `${existingInclude[0]}\n    ${includePattern}`
+            );
+          } else {
+            // Add at end of http block
+            config = config.replace(
+              /(\s+)(}[\s\n]*$)/,
+              `$1    ${includePattern}\n$1$2`
             );
           }
-          
-          if (!config.includes('$connection_upgrade')) {
-            updatedConfig = updatedConfig.replace(
-              /http\s*{/,
-              `http {${websocketMapping}\n`
-            );
-          }
-          
-          await fs.writeFile(mainConfigPath, updatedConfig);
+          configChanged = true;
+        }
+        
+        if (configChanged) {
+          await fs.writeFile(mainConfigPath, config);
           console.log(chalk.green('Updated nginx main configuration'));
         }
       }
@@ -710,9 +722,7 @@ map \\$http_upgrade \\$connection_upgrade {
     }
   }
 
-  /**
-   * Setup SSL certificate for a deployment using Certbot
-   */
+  // ssl using certbot
   static async setupSSLForDeployment(subdomain: string, publicIP: string): Promise<void> {
     if (os.platform() === 'win32') {
       console.log(chalk.yellow('SSL certificate setup skipped on Windows'));
@@ -759,9 +769,7 @@ map \\$http_upgrade \\$connection_upgrade {
     return interpreter === 'node' ? undefined : interpreter;
   }
 
-  /**
-   * Get environment variables for different frameworks
-   */
+ // get envr 
   private static getEnvironmentVariables(framework: Framework, port: number): Record<string, string> {
     const baseEnv = {
       PORT: port.toString(),
@@ -816,5 +824,51 @@ map \\$http_upgrade \\$connection_upgrade {
     const fs = await import('fs-extra');
     const filePath = path.join(projectPath, filename);
     return await fs.pathExists(filePath);
+  }
+
+  /**
+   * Fix existing nginx configurations by regenerating them
+   */
+  static async fixNginxConfigurations(): Promise<void> {
+    console.log(chalk.cyan('Fixing existing nginx configurations...'));
+    
+    try {
+      const deployments = await this.listDeployments();
+      
+      if (deployments.length === 0) {
+        console.log(chalk.gray('No deployments found to fix'));
+        return;
+      }
+
+      // Ensure main nginx config has WebSocket mapping
+      await this.ensureMainNginxConfig();
+
+      // Regenerate all deployment configs
+      for (const deployment of deployments) {
+        console.log(chalk.gray(`Fixing nginx config for ${deployment.subdomain}...`));
+        await this.setupNginxConfig(deployment);
+      }
+
+      console.log(chalk.green('All nginx configurations have been fixed'));
+      
+      // Test and reload nginx
+      try {
+        if (os.platform() === 'win32') {
+          execSync('nginx -t', { stdio: 'pipe' });
+          execSync('nginx -s reload', { stdio: 'pipe' });
+        } else {
+          execSync('sudo nginx -t', { stdio: 'pipe' });
+          execSync('sudo nginx -s reload', { stdio: 'pipe' });
+        }
+        console.log(chalk.green('Nginx configuration test passed and reloaded'));
+      } catch (error) {
+        console.log(chalk.red(`Nginx test/reload failed: ${error}`));
+        console.log(chalk.yellow('You may need to manually fix nginx configuration'));
+      }
+
+    } catch (error) {
+      console.log(chalk.red(`Failed to fix nginx configurations: ${error}`));
+      throw error;
+    }
   }
 }
