@@ -12,6 +12,8 @@ import { configCommand } from './commands/config';
 import { setupCommand } from './commands/setup';
 import { serviceCommand } from './commands/service';
 import { stopCommand } from './commands/stop';
+import { pauseCommand } from './commands/pause';
+import { resumeCommand } from './commands/resume';
 import { infraCommand } from './commands/infra';
 import { AutoRestartService } from './services/autoRestart';
 import { checkVersion } from './utils/version';
@@ -42,6 +44,8 @@ if (process.argv.includes('--service')) {
   program.addCommand(setupCommand);
   program.addCommand(serviceCommand);
   program.addCommand(stopCommand);
+  program.addCommand(pauseCommand);
+  program.addCommand(resumeCommand);
   program.addCommand(infraCommand);
 
   // Commands that export functions need to be wrapped

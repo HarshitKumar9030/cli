@@ -4,16 +4,46 @@ A powerful command-line interface for deploying and managing applications locall
 
 ## Installation
 
+### Standard Installation
 ```bash
-npm install -g forge-cli
+npm install -g forge-deploy-cli
+```
+
+### Recommended: Installation with System Privileges
+
+For full infrastructure setup (nginx, system services), install with elevated privileges:
+
+#### Windows
+```powershell
+# Run PowerShell as Administrator
+npm install -g forge-deploy-cli
+```
+
+#### Linux/macOS
+```bash
+# Install with sudo for system-wide infrastructure setup
+sudo npm install -g forge-deploy-cli
 ```
 
 ## Quick Start
 
+### 1. Setup Infrastructure (Recommended)
 ```bash
-# Setup infrastructure (PM2 + Nginx)
+# Setup all infrastructure components with elevated privileges
+sudo forge infra --all          # Linux/macOS
+# OR (Windows as Administrator)
 forge infra --all
 
+# Or setup components individually
+forge infra --pm2               # Process manager
+forge infra --nginx             # Reverse proxy (requires admin/sudo)
+forge infra --nodejs            # Node.js dependencies
+forge infra --python            # Python dependencies
+forge infra --service           # Auto-restart service
+```
+
+### 2. Authenticate and Deploy
+```bash
 # Authenticate
 forge login
 
@@ -67,11 +97,13 @@ forge logs [deployment-id]     # View deployment logs
 forge stop [deployment-id]     # Stop deployment
 ```
 
-### Infrastructure
+### Infrastructure (Requires Admin/Sudo)
 ```bash
 forge infra --all              # Setup all infrastructure
 forge infra --pm2              # Setup PM2 process manager
-forge infra --nginx            # Setup Nginx reverse proxy
+forge infra --nginx            # Setup Nginx reverse proxy (requires sudo)
+forge infra --nodejs           # Setup Node.js dependencies (serve, etc.)
+forge infra --python           # Setup Python dependencies (uvicorn, gunicorn)
 forge infra --service          # Setup auto-restart service
 ```
 
@@ -155,6 +187,27 @@ forge deploy --subdomain my-app https://github.com/username/repo
 
 ## Troubleshooting
 
+### Permission Issues
+
+#### "EACCES: permission denied" when setting up nginx
+```bash
+# Linux/macOS: Run with sudo
+sudo forge infra --nginx
+
+# Windows: Run PowerShell as Administrator
+# Right-click PowerShell → "Run as administrator"
+forge infra --nginx
+```
+
+#### Global npm package permissions
+```bash
+# Linux/macOS: Fix npm permissions or use sudo
+sudo npm install -g forge-deploy-cli
+
+# Windows: Run Command Prompt as Administrator
+npm install -g forge-deploy-cli
+```
+
 ### Port Conflicts
 ```bash
 forge status                    # Check running deployments
@@ -168,11 +221,25 @@ pm2 list                       # Check PM2 processes
 nginx -t                       # Test nginx configuration
 ```
 
+### Infrastructure Issues
+```bash
+# Check if PM2 is properly installed
+pm2 --version
+
+# Check nginx status
+sudo systemctl status nginx     # Linux
+nginx -v                        # Check if installed
+
+# Reinstall infrastructure
+sudo forge infra --all
+```
+
 ### Logs
 ```bash
 forge logs <deployment-id>     # Application logs
 pm2 logs                       # PM2 logs
 sudo journalctl -u nginx       # Nginx logs (Linux)
+tail -f /var/log/nginx/error.log # Nginx error logs
 ```
 
 ## License

@@ -8,7 +8,7 @@ import { ConfigService } from '../services/config';
 import { ForgeApiService } from '../services/api';
 import { GitService } from '../services/git';
 import { LocalDeploymentManager } from '../services/localDeployment';
-import { getSystemIP } from '../utils/system';
+import { getSystemIP, getPublicIP, checkSystemPrivileges, validatePublicIP, checkDNSConfiguration } from '../utils/system';
 import { Framework } from '../types';
 
 export const deployCommand = new Command('deploy')
@@ -24,6 +24,9 @@ export const deployCommand = new Command('deploy')
       console.log(chalk.blue('Forge Deployment'));
       console.log(chalk.gray('Preparing your application for deployment...'));
       console.log();
+
+      // Check system privileges for infrastructure setup
+      checkSystemPrivileges();
 
       const configService = new ConfigService();
       let projectPath = process.cwd();
@@ -107,9 +110,20 @@ export const deployCommand = new Command('deploy')
         console.log(chalk.gray(`Repository: ${gitRepository}`));
       }
       
-      // Get system IP for local deployment routing
-      const systemIP = getSystemIP();
-      console.log(chalk.gray(`System IP: ${systemIP}`));
+      // Get public IP for local deployment routing
+      const publicIP = await getPublicIP();
+      const localIP = getSystemIP();
+      
+      // Validate public IP
+      const ipValidation = validatePublicIP(publicIP);
+      if (!ipValidation.isValid) {
+        console.log(chalk.yellow(`⚠️  IP Warning: ${ipValidation.warning}`));
+        console.log(chalk.gray(`   Detected IP: ${publicIP}`));
+        console.log(chalk.gray('   This may cause issues with DNS routing and SSL certificates'));
+      }
+      
+      console.log(chalk.gray(`Public IP: ${publicIP}`));
+      console.log(chalk.gray(`Local IP: ${localIP}`));
       console.log();
 
       // Check authentication
@@ -192,10 +206,20 @@ export const deployCommand = new Command('deploy')
         buildCommand: buildConfig.buildCommand,
         outputDirectory: buildConfig.outputDirectory,
         environmentVariables: buildConfig.environmentVariables || {},
-        systemIP,
+        publicIP,
+        localIP,
         projectPath: isGitRepo ? projectPath : undefined,
         ...(customSubdomain && { customSubdomain })
       };
+
+      console.log(chalk.gray('Deployment data being sent:'));
+      console.log(chalk.gray(`  Project: ${projectName}`));
+      console.log(chalk.gray(`  Framework: ${framework}`));
+      console.log(chalk.gray(`  Public IP: ${publicIP}`));
+      console.log(chalk.gray(`  Local IP: ${localIP}`));
+      if (gitRepository) {
+        console.log(chalk.gray(`  Repository: ${gitRepository}`));
+      }
 
       const deployResponse = await apiService.createDeployment(deploymentData);
 
@@ -211,6 +235,17 @@ export const deployCommand = new Command('deploy')
         console.log(`  ${chalk.cyan('URL:')} ${deployment.url}`);
         console.log(`  ${chalk.cyan('Status:')} ${deployment.status}`);
         console.log(`  ${chalk.cyan('Framework:')} ${framework}`);
+        
+        // Log API response details for debugging
+        console.log(chalk.gray('API Response Details:'));
+        console.log(chalk.gray(`  Subdomain assigned: ${deployment.subdomain}`));
+        console.log(chalk.gray(`  Full URL: ${deployment.url}`));
+        if (deployment.dnsStatus) {
+          console.log(chalk.gray(`  DNS Status: ${deployment.dnsStatus}`));
+        }
+        if (deployment.sslStatus) {
+          console.log(chalk.gray(`  SSL Status: ${deployment.sslStatus}`));
+        }
         console.log();
 
         // Save deployment configuration
@@ -226,6 +261,22 @@ export const deployCommand = new Command('deploy')
 
         await configService.saveProjectConfig(projectConfig);
 
+        // Check DNS configuration
+        console.log(chalk.cyan('Checking DNS configuration...'));
+        try {
+          const fullDomain = `${deployment.subdomain}.agfe.tech`;
+          const dnsCheck = await checkDNSConfiguration(fullDomain, publicIP);
+          
+          if (dnsCheck.configured) {
+            console.log(chalk.green(`✅ DNS configured correctly: ${fullDomain} → ${dnsCheck.currentIP}`));
+          } else {
+            console.log(chalk.yellow(`⚠️  DNS not yet configured: ${dnsCheck.error}`));
+            console.log(chalk.gray('   This is normal for new deployments - DNS propagation can take a few minutes'));
+          }
+        } catch (dnsError) {
+          console.log(chalk.yellow(`⚠️  Could not check DNS: ${dnsError}`));
+        }
+
         // Start local deployment
         console.log();
         console.log(chalk.cyan('Starting local deployment...'));
@@ -236,26 +287,30 @@ export const deployCommand = new Command('deploy')
             subdomain: deployment.subdomain,
             framework,
             projectPath,
-            buildOutputDir: buildConfig.outputDirectory
-          });
-
-          console.log(chalk.green('Local deployment started successfully!'));
-          console.log();
-          console.log(chalk.blue('🚀 Access Your Application:'));
-          console.log(`  ${chalk.cyan('Local:')} http://localhost:${localDeployment.port}`);
-          console.log(`  ${chalk.cyan('Network:')} http://${systemIP}:${localDeployment.port}`);
-          console.log(`  ${chalk.cyan('Public:')} ${localDeployment.url}`);
-          console.log();
-          console.log(chalk.yellow('🔧 For Public Access:'));
-          console.log(`  ${chalk.gray('1. Open port')} ${localDeployment.port} ${chalk.gray('in your firewall')}`);
-          console.log(`  ${chalk.gray('2. Configure DNS:')} ${deployment.subdomain} → ${systemIP}`);
-          console.log(`  ${chalk.gray('3. Or use a reverse proxy (nginx, cloudflare tunnel)')}`);
-          console.log();
-          console.log(chalk.blue('⚡ Pro Tips:'));
-          console.log(`  ${chalk.cyan('forge infra --all')} - Setup nginx & PM2 for better management`);
-          console.log(`  ${chalk.cyan('forge status')} - Check all deployment status`);
-          console.log(`  ${chalk.cyan('forge stop')} - Stop this deployment`);
-          console.log(`  ${chalk.cyan('forge logs')} - View deployment logs`);
+            buildOutputDir: buildConfig.outputDirectory,
+            publicIP
+          });        console.log(chalk.green('Local deployment started successfully!'));
+        console.log();
+        console.log(chalk.blue('📁 Project Information:'));
+        console.log(`  ${chalk.cyan('Project Path:')} ${projectPath}`);
+        console.log(`  ${chalk.cyan('Framework:')} ${framework}`);
+        console.log(`  ${chalk.cyan('Deployment ID:')} ${deployment.id}`);
+        console.log();
+        console.log(chalk.blue('🚀 Access Your Application:'));
+        console.log(`  ${chalk.cyan('Local:')} http://localhost:${localDeployment.port}`);
+        console.log(`  ${chalk.cyan('Network:')} http://${localIP}:${localDeployment.port}`);
+        console.log(`  ${chalk.cyan('Public:')} ${localDeployment.url}`);
+        console.log();
+        console.log(chalk.yellow('🔧 For Public Access:'));
+        console.log(`  ${chalk.gray('1. Open port')} ${localDeployment.port} ${chalk.gray('in your firewall')}`);
+        console.log(`  ${chalk.gray('2. Domain routing is handled automatically')}`);
+        console.log();
+        console.log(chalk.blue('⚡ Pro Tips:'));
+        console.log(`  ${chalk.cyan('forge infra --all')} - Setup nginx & PM2 for better management`);
+        console.log(`  ${chalk.cyan('forge status')} - Check all deployment status`);
+        console.log(`  ${chalk.cyan('forge pause')} - Pause this deployment`);
+        console.log(`  ${chalk.cyan('forge stop')} - Stop this deployment`);
+        console.log(`  ${chalk.cyan('forge logs')} - View deployment logs`);
 
         } catch (localError) {
           console.log(chalk.yellow('⚠️  Local deployment failed, but remote deployment created'));

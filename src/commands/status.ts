@@ -87,6 +87,7 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
         const localStatusColor = getLocalStatusColor(localDep.status);
         
         console.log(chalk.white.bold(`  ${localDep.projectName} (${localDep.id})`));
+        console.log(chalk.gray(`    Project Path: ${localDep.projectPath}`));
         console.log(chalk.gray(`    Local URL: http://localhost:${localDep.port}`));
         console.log(chalk.gray(`    Public URL: ${localDep.url}`));
         console.log(`    Status: ${localStatusColor(localDep.status)}`);
@@ -98,6 +99,15 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
         
         if (localDep.pid) {
           console.log(chalk.gray(`    Process ID: ${localDep.pid}`));
+        }
+
+        // Show available actions based on status
+        if (localDep.status === 'running') {
+          console.log(chalk.blue(`    Actions: forge pause ${localDep.id} | forge stop ${localDep.id}`));
+        } else if (localDep.status === 'paused') {
+          console.log(chalk.blue(`    Actions: forge resume ${localDep.id} | forge stop ${localDep.id}`));
+        } else if (localDep.status === 'stopped') {
+          console.log(chalk.blue(`    Actions: forge deploy (to restart)`));
         }
         
         console.log();
@@ -140,8 +150,10 @@ function getLocalStatusColor(status: string) {
   switch (status.toLowerCase()) {
     case 'running':
       return chalk.green;
-    case 'stopped':
+    case 'paused':
       return chalk.yellow;
+    case 'stopped':
+      return chalk.gray;
     case 'failed':
       return chalk.red;
     default:
