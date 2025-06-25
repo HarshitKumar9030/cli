@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "serviceName": "ForgeCliService",
+  "executablePath": "C:\\Program Files\\nodejs\\node.exe",
+  "workingDirectory": "C:\\Users\\Harshit\\forge\\cli",
+  "logPath": "C:\\Users\\Harshit\\forge\\cli\\logs\\forge-service.log",
+  "restartDelay": 5000
+}

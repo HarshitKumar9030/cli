@@ -1,0 +1,9 @@
+{
+  "apiUrl": "https://api.agfe.tech",
+  "projectName": "nextjs-portfolio-starter",
+  "framework": "next.js",
+  "buildCommand": "pnpm build",
+  "outputDirectory": ".next",
+  "deploymentId": "14be7a1d-2753-40fe-9d2f-16b2107d9081",
+  "subdomain": "nextjs-portfolio"
+}
