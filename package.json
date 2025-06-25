@@ -1,7 +1,7 @@
 {
-  "name": "forge-cli",
+  "name": "forge-deploy-cli",
   "version": "1.0.0",
-  "description": "Command-line interface for the Forge deployment platform",
+  "description": "A powerful CLI for local deployments with automatic subdomain routing, PM2 process management, and Nginx reverse proxy setup",
   "main": "dist/index.js",
   "bin": {
     "forge": "dist/index.js"
@@ -12,18 +12,38 @@
     "start": "node dist/index.js",
     "test": "jest",
     "prepare": "npm run build",
-    "link": "npm link"
+    "link": "npm link",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "forge",
     "deployment",
     "cli",
-    "docker",
+    "local-deployment",
     "nginx",
-    "pm2"
+    "pm2",
+    "process-manager",
+    "reverse-proxy",
+    "subdomain",
+    "devops",
+    "infrastructure",
+    "automation"
   ],
   "author": "Forge Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harshitkumar9030/cli.git"
+  },
+  "homepage": "https://github.com/harshitkumar9030/cli#readme",
+  "bugs": {
+    "url": "https://github.com/harshitkumar9030/cli/issues"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "axios": "^1.6.2",
     "boxen": "^7.1.1",

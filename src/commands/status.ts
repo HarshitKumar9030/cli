@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { ConfigService } from '../services/config';
 import { ForgeApiService } from '../services/api';
+import { LocalDeploymentManager } from '../services/localDeployment';
 import { StatusOptions } from '../types';
 
 export async function statusCommand(options: StatusOptions): Promise<void> {
@@ -75,6 +76,34 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
       console.log();
     });
 
+    // Also show local deployment status
+    console.log(chalk.blue.bold('Local Deployments:'));
+    const localDeployments = await LocalDeploymentManager.listDeployments();
+    
+    if (localDeployments.length === 0) {
+      console.log(chalk.gray('  No local deployments found'));
+    } else {
+      localDeployments.forEach(localDep => {
+        const localStatusColor = getLocalStatusColor(localDep.status);
+        
+        console.log(chalk.white.bold(`  ${localDep.projectName} (${localDep.id})`));
+        console.log(chalk.gray(`    Local URL: http://localhost:${localDep.port}`));
+        console.log(chalk.gray(`    Public URL: ${localDep.url}`));
+        console.log(`    Status: ${localStatusColor(localDep.status)}`);
+        console.log(chalk.gray(`    Framework: ${localDep.framework}`));
+        
+        if (localDep.startedAt) {
+          console.log(chalk.gray(`    Started: ${new Date(localDep.startedAt).toLocaleString()}`));
+        }
+        
+        if (localDep.pid) {
+          console.log(chalk.gray(`    Process ID: ${localDep.pid}`));
+        }
+        
+        console.log();
+      });
+    }
+
   } catch (error) {
     console.error(chalk.red('Failed to fetch status:'), error instanceof Error ? error.message : error);
     process.exit(1);
@@ -101,6 +130,19 @@ function getHealthColor(health: string) {
     case 'healthy':
       return chalk.green;
     case 'unhealthy':
+      return chalk.red;
+    default:
+      return chalk.gray;
+  }
+}
+
+function getLocalStatusColor(status: string) {
+  switch (status.toLowerCase()) {
+    case 'running':
+      return chalk.green;
+    case 'stopped':
+      return chalk.yellow;
+    case 'failed':
       return chalk.red;
     default:
       return chalk.gray;

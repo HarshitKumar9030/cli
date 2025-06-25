@@ -1,0 +1,45 @@
+# Source files
+src/
+tsconfig.json
+*.ts
+!*.d.ts
+
+# Development files
+.env
+.env.*
+*.log
+logs/
+
+# Testing
+test/
+tests/
+*.test.js
+*.test.ts
+jest.config.js
+coverage/
+
+# Build artifacts
+.tsbuildinfo
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Forge specific
+forge-deployments.json
+forge-autorestart.json
+forge-*.config.js
+ecosystem.config.js

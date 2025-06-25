@@ -7,6 +7,7 @@ import inquirer from 'inquirer';
 import { ConfigService } from '../services/config';
 import { ForgeApiService } from '../services/api';
 import { GitService } from '../services/git';
+import { LocalDeploymentManager } from '../services/localDeployment';
 import { getSystemIP } from '../utils/system';
 import { Framework } from '../types';
 
@@ -131,14 +132,10 @@ export const deployCommand = new Command('deploy')
         process.exit(1);
       }
 
-      // Auto-generate subdomain for web projects
-      let subdomain: string;
-      if (options.subdomain) {
-        subdomain = options.subdomain;
-      } else {
-        // Auto-generate subdomain based on project name and timestamp for uniqueness
-        subdomain = generateUniqueSubdomain(projectName);
-        console.log(chalk.gray(`Auto-generated subdomain: ${subdomain}`));
+      // Custom subdomain (if provided)
+      const customSubdomain = options.subdomain;
+      if (customSubdomain) {
+        console.log(chalk.gray(`Using custom subdomain: ${customSubdomain}`));
       }
 
       // Build configuration
@@ -189,7 +186,6 @@ export const deployCommand = new Command('deploy')
       
       const deploymentData = {
         projectName,
-        subdomain,
         gitRepository,
         gitBranch: options.branch,
         framework,
@@ -197,7 +193,8 @@ export const deployCommand = new Command('deploy')
         outputDirectory: buildConfig.outputDirectory,
         environmentVariables: buildConfig.environmentVariables || {},
         systemIP,
-        projectPath: isGitRepo ? projectPath : undefined
+        projectPath: isGitRepo ? projectPath : undefined,
+        ...(customSubdomain && { customSubdomain })
       };
 
       const deployResponse = await apiService.createDeployment(deploymentData);
@@ -210,7 +207,7 @@ export const deployCommand = new Command('deploy')
         console.log();
         console.log(chalk.blue('Deployment Details:'));
         console.log(`  ${chalk.cyan('ID:')} ${deployment.id}`);
-        console.log(`  ${chalk.cyan('Subdomain:')} ${subdomain}`);
+        console.log(`  ${chalk.cyan('Subdomain:')} ${deployment.subdomain}`);
         console.log(`  ${chalk.cyan('URL:')} ${deployment.url}`);
         console.log(`  ${chalk.cyan('Status:')} ${deployment.status}`);
         console.log(`  ${chalk.cyan('Framework:')} ${framework}`);
@@ -224,14 +221,48 @@ export const deployCommand = new Command('deploy')
           outputDirectory: buildConfig.outputDirectory,
           environmentVariables: buildConfig.environmentVariables,
           deploymentId: deployment.id,
-          subdomain
+          subdomain: deployment.subdomain
         };
 
         await configService.saveProjectConfig(projectConfig);
 
-        console.log(chalk.blue('Your application is being deployed...'));
-        console.log(chalk.gray('Use "forge status" to check deployment progress'));
-        console.log(chalk.gray('Use "forge logs" to view deployment logs'));
+        // Start local deployment
+        console.log();
+        console.log(chalk.cyan('Starting local deployment...'));
+        try {
+          const localDeployment = await LocalDeploymentManager.deployLocally({
+            id: deployment.id,
+            projectName,
+            subdomain: deployment.subdomain,
+            framework,
+            projectPath,
+            buildOutputDir: buildConfig.outputDirectory
+          });
+
+          console.log(chalk.green('Local deployment started successfully!'));
+          console.log();
+          console.log(chalk.blue('🚀 Access Your Application:'));
+          console.log(`  ${chalk.cyan('Local:')} http://localhost:${localDeployment.port}`);
+          console.log(`  ${chalk.cyan('Network:')} http://${systemIP}:${localDeployment.port}`);
+          console.log(`  ${chalk.cyan('Public:')} ${localDeployment.url}`);
+          console.log();
+          console.log(chalk.yellow('🔧 For Public Access:'));
+          console.log(`  ${chalk.gray('1. Open port')} ${localDeployment.port} ${chalk.gray('in your firewall')}`);
+          console.log(`  ${chalk.gray('2. Configure DNS:')} ${deployment.subdomain} → ${systemIP}`);
+          console.log(`  ${chalk.gray('3. Or use a reverse proxy (nginx, cloudflare tunnel)')}`);
+          console.log();
+          console.log(chalk.blue('⚡ Pro Tips:'));
+          console.log(`  ${chalk.cyan('forge infra --all')} - Setup nginx & PM2 for better management`);
+          console.log(`  ${chalk.cyan('forge status')} - Check all deployment status`);
+          console.log(`  ${chalk.cyan('forge stop')} - Stop this deployment`);
+          console.log(`  ${chalk.cyan('forge logs')} - View deployment logs`);
+
+        } catch (localError) {
+          console.log(chalk.yellow('⚠️  Local deployment failed, but remote deployment created'));
+          console.log(chalk.gray(`Local error: ${localError}`));
+          console.log(chalk.gray('Use "forge status" to check deployment progress'));
+          console.log(chalk.gray('Use "forge logs" to view deployment logs'));
+        }
 
       } else {
         throw new Error(deployResponse.error?.message || 'Deployment failed');
@@ -396,24 +427,6 @@ function isWebFramework(framework: Framework): boolean {
     Framework.SYMFONY,
     Framework.WORDPRESS
   ].includes(framework);
-}
-
-function generateSubdomainFromProjectName(projectName: string): string {
-  return projectName
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .substring(0, 63);
-}
-
-function generateUniqueSubdomain(projectName: string): string {
-  const baseSubdomain = generateSubdomainFromProjectName(projectName);
-  const timestamp = Date.now().toString().slice(-6); // Last 6 digits for uniqueness
-  const uniqueSubdomain = `${baseSubdomain}-${timestamp}`;
-  
-  // Ensure it doesn't exceed 63 characters
-  return uniqueSubdomain.substring(0, 63);
 }
 
 async function getBuildConfiguration(framework: Framework, projectPath: string): Promise<{
