@@ -481,19 +481,6 @@ export class LocalDeploymentManager {
       
       console.log(chalk.gray(`Nginx config created: ${configPath}`));
       
-      // Test nginx configuration before reloading
-      try {
-        if (os.platform() === 'win32') {
-          execSync('nginx -t', { stdio: 'pipe' });
-        } else {
-          execSync('sudo nginx -t', { stdio: 'pipe' });
-        }
-        console.log(chalk.gray('Nginx configuration test passed'));
-      } catch (testError) {
-        console.log(chalk.red(`Nginx configuration test failed: ${testError}`));
-        throw new Error(`Invalid nginx configuration: ${testError}`);
-      }
-      
       // Reload nginx if running
       try {
         if (os.platform() === 'win32') {
@@ -502,10 +489,9 @@ export class LocalDeploymentManager {
           execSync('sudo nginx -s reload', { stdio: 'pipe' });
         }
         console.log(chalk.green('Nginx configuration reloaded'));
-      } catch (reloadError) {
+      } catch {
         console.log(chalk.yellow('Warning: Could not reload nginx automatically'));
         console.log(chalk.gray('Run "nginx -s reload" or "sudo nginx -s reload" manually'));
-        console.log(chalk.gray(`Reload error: ${reloadError}`));
       }
       
     } catch (error) {
@@ -518,32 +504,18 @@ export class LocalDeploymentManager {
    */
   private static generateNginxConfig(subdomain: string, port: number, systemIP: string): string {
     return `# Forge deployment: ${subdomain}
-upstream ${subdomain}_backend {
-    server 127.0.0.1:${port} fail_timeout=30s max_fails=3;
-    keepalive 32;
-}
-
 server {
     listen 80;
     server_name ${subdomain}.agfe.tech;
 
-    # Basic security headers
-    add_header X-Frame-Options DENY always;
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    # Security headers
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
 
     # Let's Encrypt challenge location
     location /.well-known/acme-challenge/ {
         root /var/www/html;
-        allow all;
-    }
-
-    # Health check endpoint (before SSL redirect)
-    location = /health {
-        access_log off;
-        return 200 "healthy\\n";
-        add_header Content-Type text/plain always;
     }
 
     # Redirect HTTP to HTTPS (will be enabled after SSL setup)
@@ -551,46 +523,63 @@ server {
 
     # Proxy to local application
     location / {
-        # Error pages for upstream issues
-        error_page 502 503 504 /50x.html;
-        
-        proxy_pass http://${subdomain}_backend;
+        proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
-        
-        # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        
-        # Standard proxy headers
+        proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $server_name;
-        
-        # Caching
         proxy_cache_bypass $http_upgrade;
-        proxy_no_cache $http_upgrade;
         
-        # Timeout settings (more aggressive for 522 prevention)
-        proxy_connect_timeout 10s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
-        
-        # Buffer settings
-        proxy_buffering on;
-        proxy_buffer_size 128k;
-        proxy_buffers 4 256k;
-        proxy_busy_buffers_size 256k;
+        # Timeout settings
+        proxy_connect_timeout 30;
+        proxy_send_timeout 30;
+        proxy_read_timeout 30;
     }
 
-    # Error page for upstream issues
-    location = /50x.html {
-        return 502 "Service temporarily unavailable. Please try again in a moment.";
-        add_header Content-Type text/plain always;
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
     }
 }
+
+# SSL configuration (will be automatically configured by certbot)
+# server {
+#     listen 443 ssl http2;
+#     server_name ${subdomain}.agfe.tech;
+#     
+#     ssl_certificate /etc/letsencrypt/live/${subdomain}.agfe.tech/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/${subdomain}.agfe.tech/privkey.pem;
+#     include /etc/letsencrypt/options-ssl-nginx.conf;
+#     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+#     
+#     # Enhanced security headers for HTTPS
+#     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+#     add_header X-Frame-Options DENY;
+#     add_header X-Content-Type-Options nosniff;
+#     add_header X-XSS-Protection "1; mode=block";
+#     
+#     location / {
+#         proxy_pass http://127.0.0.1:${port};
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection 'upgrade';
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#         proxy_cache_bypass $http_upgrade;
+#         
+#         # Timeout settings
+#         proxy_connect_timeout 30;
+#         proxy_send_timeout 30;
+#         proxy_read_timeout 30;
+#     }
+# }
 `;
   }
 
@@ -653,7 +642,9 @@ server {
     }
   }
 
-  // ensure main nginx conf includes forge files
+  /**
+   * Ensure main nginx configuration includes forge sites
+   */
   private static async ensureMainNginxConfig(): Promise<void> {
     const mainConfigPath = os.platform() === 'win32' 
       ? 'C:\\nginx\\conf\\nginx.conf'
@@ -661,60 +652,19 @@ server {
     
     try {
       if (await fs.pathExists(mainConfigPath)) {
-        let config = await fs.readFile(mainConfigPath, 'utf8');
+        const config = await fs.readFile(mainConfigPath, 'utf8');
         const includePattern = os.platform() === 'win32'
           ? 'include forge-sites/*.conf;'
           : 'include /etc/nginx/sites-available/*.conf;';
         
-        let configChanged = false;
-        
-        // Add WebSocket upgrade mapping if not present
-        if (!config.includes('$connection_upgrade')) {
-          console.log(chalk.gray('Adding WebSocket mapping to nginx.conf'));
-          
-          // Find the http block and add the mapping after the opening brace
-          const httpMatch = config.match(/(http\s*{)/);
-          if (httpMatch) {
-            const websocketMapping = `
-    # WebSocket upgrade mapping for Forge deployments
-    map $http_upgrade $connection_upgrade {
-        default upgrade;
-        '' close;
-    }`;
-            
-            config = config.replace(
-              httpMatch[1],
-              `${httpMatch[1]}${websocketMapping}`
-            );
-            configChanged = true;
-          }
-        }
-        
-        // Add include directive if not present
         if (!config.includes(includePattern)) {
           console.log(chalk.gray('Adding forge sites include to nginx.conf'));
-          
-          // Find a good place to add the include - typically near other includes
-          const existingInclude = config.match(/include\s+[^;]+;/);
-          if (existingInclude) {
-            // Add after existing include
-            config = config.replace(
-              existingInclude[0],
-              `${existingInclude[0]}\n    ${includePattern}`
-            );
-          } else {
-            // Add at end of http block
-            config = config.replace(
-              /(\s+)(}[\s\n]*$)/,
-              `$1    ${includePattern}\n$1$2`
-            );
-          }
-          configChanged = true;
-        }
-        
-        if (configChanged) {
-          await fs.writeFile(mainConfigPath, config);
-          console.log(chalk.green('Updated nginx main configuration'));
+          // Add include directive in http block
+          const updatedConfig = config.replace(
+            /http\s*{/,
+            `http {\n    ${includePattern}`
+          );
+          await fs.writeFile(mainConfigPath, updatedConfig);
         }
       }
     } catch (error) {
@@ -722,7 +672,9 @@ server {
     }
   }
 
-  // ssl using certbot
+  /**
+   * Setup SSL certificate for a deployment using Certbot
+   */
   static async setupSSLForDeployment(subdomain: string, publicIP: string): Promise<void> {
     if (os.platform() === 'win32') {
       console.log(chalk.yellow('SSL certificate setup skipped on Windows'));
@@ -769,7 +721,9 @@ server {
     return interpreter === 'node' ? undefined : interpreter;
   }
 
- // get envr 
+  /**
+   * Get environment variables for different frameworks
+   */
   private static getEnvironmentVariables(framework: Framework, port: number): Record<string, string> {
     const baseEnv = {
       PORT: port.toString(),
@@ -824,51 +778,5 @@ server {
     const fs = await import('fs-extra');
     const filePath = path.join(projectPath, filename);
     return await fs.pathExists(filePath);
-  }
-
-  /**
-   * Fix existing nginx configurations by regenerating them
-   */
-  static async fixNginxConfigurations(): Promise<void> {
-    console.log(chalk.cyan('Fixing existing nginx configurations...'));
-    
-    try {
-      const deployments = await this.listDeployments();
-      
-      if (deployments.length === 0) {
-        console.log(chalk.gray('No deployments found to fix'));
-        return;
-      }
-
-      // Ensure main nginx config has WebSocket mapping
-      await this.ensureMainNginxConfig();
-
-      // Regenerate all deployment configs
-      for (const deployment of deployments) {
-        console.log(chalk.gray(`Fixing nginx config for ${deployment.subdomain}...`));
-        await this.setupNginxConfig(deployment);
-      }
-
-      console.log(chalk.green('All nginx configurations have been fixed'));
-      
-      // Test and reload nginx
-      try {
-        if (os.platform() === 'win32') {
-          execSync('nginx -t', { stdio: 'pipe' });
-          execSync('nginx -s reload', { stdio: 'pipe' });
-        } else {
-          execSync('sudo nginx -t', { stdio: 'pipe' });
-          execSync('sudo nginx -s reload', { stdio: 'pipe' });
-        }
-        console.log(chalk.green('Nginx configuration test passed and reloaded'));
-      } catch (error) {
-        console.log(chalk.red(`Nginx test/reload failed: ${error}`));
-        console.log(chalk.yellow('You may need to manually fix nginx configuration'));
-      }
-
-    } catch (error) {
-      console.log(chalk.red(`Failed to fix nginx configurations: ${error}`));
-      throw error;
-    }
   }
 }

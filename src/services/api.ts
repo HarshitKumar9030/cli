@@ -49,18 +49,8 @@ export class ForgeApiService {
   }
 
   async createDeployment(deploymentData: any): Promise<ApiResponse<any>> {
-    try {
-      const response: AxiosResponse<ApiResponse<any>> = await this.client.post('/api/deployments', deploymentData);
-      return response.data;
-    } catch (error: any) {
-      console.error('API Error Details:', {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data,
-        message: error.message
-      });
-      throw error;
-    }
+    const response: AxiosResponse<ApiResponse<any>> = await this.client.post('/api/deployments', deploymentData);
+    return response.data;
   }
 
   async getDeployments(filters?: any): Promise<ApiResponse<{ deployments: Deployment[] }>> {
