@@ -506,6 +506,9 @@ export class LocalDeploymentManager {
       // Ensure nginx config directory exists
       await fs.ensureDir(this.NGINX_CONFIG_DIR);
       
+      // Ensure main nginx.conf includes forge-sites directory
+      await this.ensureMainNginxConfig();
+      
       // Generate nginx configuration for this specific subdomain
       const nginxConfig = this.generateNginxConfig(subdomain, port, sslConfigured);
       
@@ -541,12 +544,6 @@ export class LocalDeploymentManager {
 # Generated on ${new Date().toISOString()}
 # HTTP-only configuration
 
-# Upstream definition
-upstream ${subdomain}_backend {
-    server 127.0.0.1:${port} max_fails=3 fail_timeout=30s;
-    keepalive 32;
-}
-
 # HTTP server
 server {
     listen 80;
@@ -567,7 +564,7 @@ server {
     
     # Main application proxy
     location / {
-        proxy_pass http://${subdomain}_backend;
+        proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -593,7 +590,7 @@ server {
     
     # Static file caching
     location ~* \\.(jpg|jpeg|png|gif|ico|svg|webp|avif|css|js|woff|woff2|ttf|eot)$ {
-        proxy_pass http://${subdomain}_backend;
+        proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -614,12 +611,6 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
     return `# Forge deployment configuration for ${subdomain}
 # Generated on ${new Date().toISOString()}
 # HTTPS configuration with per-subdomain SSL certificate
-
-# Upstream definition
-upstream ${subdomain}_backend {
-    server 127.0.0.1:${port} max_fails=3 fail_timeout=30s;
-    keepalive 32;
-}
 
 # HTTP server - redirects to HTTPS
 server {
@@ -680,7 +671,7 @@ server {
     
     # Main application proxy
     location / {
-        proxy_pass http://${subdomain}_backend;
+        proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -706,7 +697,7 @@ server {
     
     # Static file caching
     location ~* \\.(jpg|jpeg|png|gif|ico|svg|webp|avif|css|js|woff|woff2|ttf|eot)$ {
-        proxy_pass http://${subdomain}_backend;
+        proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -841,12 +832,28 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
         
         if (!config.includes(includePattern)) {
           console.log(chalk.gray('Adding forge sites include to nginx.conf'));
-          // Add include directive in http block
+          
+          // Add include directive right after the http { line with proper formatting
           const updatedConfig = config.replace(
             /http\s*{/,
-            `http {\n    ${includePattern}`
+            `http {\n        # Include forge sites configuration\n        ${includePattern}`
           );
+          
           await fs.writeFile(mainConfigPath, updatedConfig);
+          
+          // Test nginx configuration
+          const { execSync } = await import('child_process');
+          try {
+            execSync('nginx -t', { stdio: 'pipe' });
+            console.log(chalk.green('Nginx configuration updated successfully'));
+          } catch (testError) {
+            console.log(chalk.red('Nginx configuration test failed after update'));
+            // Restore original configuration
+            await fs.writeFile(mainConfigPath, config);
+            throw new Error('Failed to update nginx configuration - restored original');
+          }
+        } else {
+          console.log(chalk.gray('Forge sites include already present in nginx.conf'));
         }
       }
     } catch (error) {

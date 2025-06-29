@@ -1,6 +1,6 @@
 {
   "name": "forge-deploy-cli",
-  "version": "1.3.3",
+  "version": "2.0.1",
   "description": "A powerful CLI for local deployments with automatic subdomain routing, PM2 process management, and Nginx reverse proxy setup",
   "main": "dist/index.js",
   "bin": {
