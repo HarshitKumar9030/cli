@@ -443,78 +443,164 @@ async function setupPythonDependencies(): Promise<void> {
 
 async function setupNginxPackage(): Promise<void> {
   const { execSync } = await import('child_process');
+  const fs = await import('fs-extra');
   
   try {
     // Check if nginx is already installed
     execSync('nginx -v', { stdio: 'pipe' });
     console.log(chalk.gray('Nginx is already installed'));
-    return;
   } catch {
-    // Nginx not installed, proceed with installation
-  }
-  
-  console.log(chalk.gray('Installing nginx...'));
-  
-  if (isWindows()) {
-    console.log(chalk.yellow('Windows nginx installation:'));
-    console.log(chalk.gray('  1. Download nginx from http://nginx.org/en/download.html'));
-    console.log(chalk.gray('  2. Extract to C:\\nginx'));
-    console.log(chalk.gray('  3. Add C:\\nginx to your PATH'));
-    console.log(chalk.gray('  4. Run "nginx.exe" to start'));
-    console.log(chalk.gray('Or use chocolatey: choco install nginx'));
-    return;
-  }
-  
-  // Linux installation
-  try {
-    // Try different package managers
-    try {
-      console.log(chalk.gray('Updating package repositories...'));
-      execSync('apt-get update', { stdio: 'inherit' });
-      console.log(chalk.gray('Installing nginx via apt...'));
-      execSync('apt-get install -y nginx', { stdio: 'inherit' });
-    } catch {
+    console.log(chalk.gray('Installing nginx...'));
+    
+    if (isWindows()) {
+      console.log(chalk.yellow('Windows nginx installation:'));
+      console.log(chalk.gray('  1. Download nginx from http://nginx.org/en/download.html'));
+      console.log(chalk.gray('  2. Extract to C:\\nginx'));
+      console.log(chalk.gray('  3. Add C:\\nginx to your PATH'));
+      console.log(chalk.gray('  4. Run "nginx.exe" to start'));
+      console.log(chalk.gray('Or use chocolatey: choco install nginx'));
+      return;
+    }
+    
+    // Linux installation with better error handling
+    let installSuccess = false;
+    const packageManagers = [
+      { cmd: 'apt-get update && apt-get install -y nginx', name: 'apt' },
+      { cmd: 'yum install -y nginx', name: 'yum' },
+      { cmd: 'dnf install -y nginx', name: 'dnf' },
+      { cmd: 'pacman -S --noconfirm nginx', name: 'pacman' },
+      { cmd: 'zypper install -y nginx', name: 'zypper' }
+    ];
+    
+    for (const pm of packageManagers) {
       try {
-        console.log(chalk.gray('Installing nginx via yum...'));
-        execSync('yum install -y nginx', { stdio: 'inherit' });
+        console.log(chalk.gray(`Installing nginx via ${pm.name}...`));
+        execSync(pm.cmd, { stdio: 'inherit' });
+        installSuccess = true;
+        break;
       } catch {
-        try {
-          console.log(chalk.gray('Installing nginx via dnf...'));
-          execSync('dnf install -y nginx', { stdio: 'inherit' });
-        } catch {
-          throw new Error('Could not install nginx automatically. Please install manually.');
-        }
+        continue;
       }
     }
     
-    // Enable and start nginx
-    try {
-      console.log(chalk.gray('Enabling nginx service...'));
-      execSync('systemctl enable nginx', { stdio: 'pipe' });
-      console.log(chalk.gray('Starting nginx service...'));
-      execSync('systemctl start nginx', { stdio: 'pipe' });
-      console.log(chalk.green('Nginx installed and started successfully'));
-    } catch (error) {
-      console.log(chalk.yellow('Warning: Could not enable/start nginx service automatically'));
-      console.log(chalk.gray('You may need to start it manually: sudo systemctl start nginx'));
+    if (!installSuccess) {
+      throw new Error('Could not install nginx automatically. Please install manually.');
     }
-    
-    // Test nginx installation
-    try {
-      execSync('nginx -v', { stdio: 'pipe' });
-      console.log(chalk.green('Nginx installation verified'));
-    } catch {
-      throw new Error('Nginx installation failed verification');
-    }
-    
+  }
+  
+  // Configure nginx for Forge
+  try {
+    await setupNginxConfiguration();
+    console.log(chalk.green('Nginx configuration setup completed'));
   } catch (error) {
-    console.log(chalk.red(`Failed to install nginx: ${error}`));
+    console.log(chalk.yellow(`Warning: Nginx configuration setup failed: ${error}`));
+  }
+  
+  // Enable and start nginx service
+  try {
+    console.log(chalk.gray('Configuring nginx service...'));
+    execSync('systemctl enable nginx', { stdio: 'pipe' });
+    execSync('systemctl start nginx', { stdio: 'pipe' });
+    console.log(chalk.green('Nginx service enabled and started'));
+  } catch (error) {
+    console.log(chalk.yellow('Warning: Could not enable/start nginx service automatically'));
+    console.log(chalk.gray('You may need to start it manually: sudo systemctl start nginx'));
+  }
+  
+  // Verify installation
+  try {
+    execSync('nginx -v', { stdio: 'pipe' });
+    const status = execSync('systemctl is-active nginx', { encoding: 'utf8', stdio: 'pipe' }).trim();
+    if (status === 'active') {
+      console.log(chalk.green('✅ Nginx installation and configuration verified'));
+    } else {
+      console.log(chalk.yellow('⚠️  Nginx installed but service is not active'));
+    }
+  } catch {
+    throw new Error('Nginx installation failed verification');
+  }
+}
+
+async function setupNginxConfiguration(): Promise<void> {
+  const fs = await import('fs-extra');
+  const { execSync } = await import('child_process');
+  
+  // Ensure nginx directories exist
+  const nginxDirs = [
+    '/etc/nginx/sites-available',
+    '/etc/nginx/sites-enabled', 
+    '/etc/nginx/forge-sites',
+    '/var/www/html/.well-known/acme-challenge'
+  ];
+  
+  for (const dir of nginxDirs) {
+    await fs.ensureDir(dir);
+  }
+  
+  // Create main nginx configuration if needed
+  const mainConfigPath = '/etc/nginx/nginx.conf';
+  const backupConfigPath = '/etc/nginx/nginx.conf.forge-backup';
+  
+  if (await fs.pathExists(mainConfigPath)) {
+    // Backup existing config
+    if (!await fs.pathExists(backupConfigPath)) {
+      await fs.copy(mainConfigPath, backupConfigPath);
+      console.log(chalk.gray('Backed up existing nginx.conf'));
+    }
+    
+    // Update config to include forge sites
+    let config = await fs.readFile(mainConfigPath, 'utf8');
+    const forgeInclude = 'include /etc/nginx/forge-sites/*.conf;';
+    
+    if (!config.includes(forgeInclude)) {
+      // Add forge sites include before the default server block
+      config = config.replace(
+        /include \/etc\/nginx\/sites-enabled\/\*;/,
+        `include /etc/nginx/sites-enabled/*;\n    ${forgeInclude}`
+      );
+      
+      await fs.writeFile(mainConfigPath, config);
+      console.log(chalk.gray('Updated nginx.conf to include forge sites'));
+    }
+  }
+  
+  // Create default SSL configuration
+  const sslConfigPath = '/etc/nginx/forge-ssl.conf';
+  const sslConfig = `# Forge SSL Configuration
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+
+# SSL session settings
+ssl_session_timeout 1d;
+ssl_session_cache shared:ForgeSSL:50m;
+ssl_stapling on;
+ssl_stapling_verify on;
+
+# Security headers
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+add_header X-Frame-Options DENY always;
+add_header X-Content-Type-Options nosniff always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+`;
+  
+  await fs.writeFile(sslConfigPath, sslConfig);
+  console.log(chalk.gray('Created SSL configuration file'));
+  
+  // Test nginx configuration
+  try {
+    execSync('nginx -t', { stdio: 'pipe' });
+    console.log(chalk.green('Nginx configuration test passed'));
+  } catch (error) {
+    console.log(chalk.red('Nginx configuration test failed'));
     throw error;
   }
 }
 
 async function setupSSLCertificates(): Promise<void> {
   const { execSync } = await import('child_process');
+  const fs = await import('fs-extra');
   
   if (isWindows()) {
     console.log(chalk.yellow('SSL certificate setup on Windows:'));
@@ -526,91 +612,237 @@ async function setupSSLCertificates(): Promise<void> {
     return;
   }
   
-  console.log(chalk.gray('Installing Certbot for automatic SSL certificates...'));
+  console.log(chalk.gray('Setting up SSL certificate management with Certbot...'));
+  
+  try {
+    // Install certbot
+    await installCertbot();
+    
+    // Setup certbot hooks and scripts
+    await setupCertbotIntegration();
+    
+    // Configure automatic renewal
+    await setupAutoRenewal();
+    
+    console.log(chalk.green('SSL certificate management setup completed'));
+    console.log(chalk.blue('📋 SSL Certificate Info:'));
+    console.log(chalk.gray('  • SSL certificates will be managed per deployment'));
+    console.log(chalk.gray('  • Certificates are requested automatically during deployment'));
+    console.log(chalk.gray('  • Automatic renewal is enabled via systemd timer'));
+    console.log(chalk.gray('  • Certificates are stored in /etc/letsencrypt/live/'));
+    console.log(chalk.yellow('  • Note: Cloudflare DNS management is handled via API for security'));
+    
+  } catch (error) {
+    console.log(chalk.red(`Failed to setup SSL certificates: ${error}`));
+    throw error;
+  }
+}
+
+async function installCertbot(): Promise<void> {
+  const { execSync } = await import('child_process');
   
   try {
     // Check if certbot is already installed
+    execSync('certbot --version', { stdio: 'pipe' });
+    console.log(chalk.gray('Certbot is already installed'));
+    return;
+  } catch {
+    // Install certbot
+  }
+  
+  console.log(chalk.gray('Installing Certbot...'));
+  
+  const installMethods = [
+    {
+      name: 'apt',
+      commands: [
+        'apt-get update',
+        'apt-get install -y certbot python3-certbot-nginx'
+      ]
+    },
+    {
+      name: 'snap',
+      commands: [
+        'snap install core; snap refresh core',
+        'snap install --classic certbot',
+        'ln -sf /snap/bin/certbot /usr/bin/certbot'
+      ]
+    },
+    {
+      name: 'yum/dnf',
+      commands: [
+        'yum install -y certbot python3-certbot-nginx || dnf install -y certbot python3-certbot-nginx'
+      ]
+    }
+  ];
+  
+  let installSuccess = false;
+  
+  for (const method of installMethods) {
     try {
-      execSync('certbot --version', { stdio: 'pipe' });
-      console.log(chalk.gray('Certbot is already installed'));
-    } catch {
-      // Install certbot based on the OS
-      try {
-        console.log(chalk.gray('Installing certbot via apt...'));
-        execSync('apt-get update', { stdio: 'inherit' });
-        execSync('apt-get install -y certbot python3-certbot-nginx', { stdio: 'inherit' });
-      } catch {
-        try {
-          console.log(chalk.gray('Installing certbot via snap...'));
-          execSync('snap install core; snap refresh core', { stdio: 'inherit' });
-          execSync('snap install --classic certbot', { stdio: 'inherit' });
-          execSync('ln -sf /snap/bin/certbot /usr/bin/certbot', { stdio: 'inherit' });
-        } catch {
-          try {
-            console.log(chalk.gray('Installing certbot via yum/dnf...'));
-            execSync('yum install -y certbot python3-certbot-nginx || dnf install -y certbot python3-certbot-nginx', { stdio: 'inherit' });
-          } catch {
-            throw new Error('Could not install certbot automatically');
-          }
-        }
+      console.log(chalk.gray(`Installing certbot via ${method.name}...`));
+      for (const cmd of method.commands) {
+        execSync(cmd, { stdio: 'inherit' });
       }
-    }
-    
-    // Create certbot renewal systemd timer
-    console.log(chalk.gray('Setting up automatic certificate renewal...'));
-    try {
-      execSync('systemctl enable certbot.timer', { stdio: 'pipe' });
-      execSync('systemctl start certbot.timer', { stdio: 'pipe' });
-      console.log(chalk.green('Automatic certificate renewal enabled'));
+      
+      // Verify installation
+      execSync('certbot --version', { stdio: 'pipe' });
+      installSuccess = true;
+      console.log(chalk.green(`Certbot installed successfully via ${method.name}`));
+      break;
     } catch {
-      console.log(chalk.yellow('Warning: Could not enable automatic renewal'));
+      console.log(chalk.gray(`Failed to install via ${method.name}, trying next method...`));
+      continue;
     }
-    
-    // Create certificate setup script for deployments
-    const fs = await import('fs-extra');
-    const certbotScript = `#!/bin/bash
+  }
+  
+  if (!installSuccess) {
+    throw new Error('Could not install certbot automatically');
+  }
+}
+
+async function setupCertbotIntegration(): Promise<void> {
+  const fs = await import('fs-extra');
+  const { execSync } = await import('child_process');
+  
+  // Create pre/post hooks for nginx integration
+  const hooksDir = '/etc/letsencrypt/renewal-hooks';
+  await fs.ensureDir(`${hooksDir}/pre`);
+  await fs.ensureDir(`${hooksDir}/post`);
+  
+  // Pre-hook: Test nginx config before renewal
+  const preHook = `#!/bin/bash
+# Forge SSL Pre-renewal Hook
+echo "Testing nginx configuration before certificate renewal..."
+nginx -t
+if [ $? -ne 0 ]; then
+    echo "Nginx configuration test failed. Skipping renewal."
+    exit 1
+fi
+`;
+  
+  await fs.writeFile(`${hooksDir}/pre/forge-nginx-test`, preHook);
+  execSync(`chmod +x ${hooksDir}/pre/forge-nginx-test`, { stdio: 'pipe' });
+  
+  // Post-hook: Reload nginx after successful renewal
+  const postHook = `#!/bin/bash
+# Forge SSL Post-renewal Hook
+echo "Reloading nginx after certificate renewal..."
+systemctl reload nginx
+if [ $? -eq 0 ]; then
+    echo "Nginx reloaded successfully"
+else
+    echo "Failed to reload nginx"
+fi
+`;
+  
+  await fs.writeFile(`${hooksDir}/post/forge-nginx-reload`, postHook);
+  execSync(`chmod +x ${hooksDir}/post/forge-nginx-reload`, { stdio: 'pipe' });
+  
+  // Create SSL certificate setup script for deployments
+  const sslSetupScript = `#!/bin/bash
 # Forge SSL Certificate Setup Script
 # This script is called automatically when deploying with SSL
 
-DOMAIN=$1
-PUBLIC_IP=$2
+set -e
+
+DOMAIN="$1"
+PUBLIC_IP="$2"
+NGINX_CONFIG="$3"
 
 if [ -z "$DOMAIN" ] || [ -z "$PUBLIC_IP" ]; then
-    echo "Usage: $0 <domain> <public-ip>"
+    echo "Usage: $0 <domain> <public-ip> [nginx-config-path]"
     exit 1
 fi
 
 echo "Setting up SSL certificate for $DOMAIN..."
 
 # Check if certificate already exists
-if certbot certificates | grep -q "$DOMAIN"; then
-    echo "Certificate for $DOMAIN already exists"
+if certbot certificates 2>/dev/null | grep -q "$DOMAIN"; then
+    echo "Certificate for $DOMAIN already exists, checking if renewal is needed..."
+    certbot renew --cert-name "$DOMAIN" --nginx --non-interactive
+    echo "Certificate check completed for $DOMAIN"
     exit 0
 fi
 
+# Wait for DNS propagation if needed
+echo "Checking DNS resolution for $DOMAIN..."
+for i in {1..30}; do
+    if nslookup "$DOMAIN" >/dev/null 2>&1; then
+        echo "DNS resolution successful for $DOMAIN"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "Warning: DNS resolution failed for $DOMAIN, but proceeding anyway..."
+    fi
+    sleep 2
+done
+
+# Test nginx configuration before requesting certificate
+echo "Testing nginx configuration..."
+nginx -t
+if [ $? -ne 0 ]; then
+    echo "Nginx configuration test failed. Please fix the configuration first."
+    exit 1
+fi
+
 # Request certificate using nginx plugin
-certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email admin@$DOMAIN --redirect
+echo "Requesting SSL certificate from Let's Encrypt..."
+certbot --nginx -d "$DOMAIN" \\
+    --non-interactive \\
+    --agree-tos \\
+    --email "admin@$DOMAIN" \\
+    --redirect \\
+    --no-eff-email
 
-# Reload nginx to apply changes
-nginx -s reload
-
-echo "SSL certificate setup completed for $DOMAIN"
+if [ $? -eq 0 ]; then
+    echo "SSL certificate setup completed successfully for $DOMAIN"
+    
+    # Test the configuration again
+    nginx -t && systemctl reload nginx
+    
+    echo "Nginx configuration updated and reloaded"
+else
+    echo "SSL certificate setup failed for $DOMAIN"
+    exit 1
+fi
 `;
+  
+  const scriptPath = '/usr/local/bin/forge-ssl-setup';
+  await fs.writeFile(scriptPath, sslSetupScript);
+  execSync(`chmod +x ${scriptPath}`, { stdio: 'pipe' });
+  console.log(chalk.gray(`Created SSL setup script: ${scriptPath}`));
+}
+
+
+async function setupAutoRenewal(): Promise<void> {
+  const { execSync } = await import('child_process');
+  
+  try {
+    // Enable certbot renewal timer
+    console.log(chalk.gray('Setting up automatic certificate renewal...'));
+    execSync('systemctl enable certbot.timer', { stdio: 'pipe' });
+    execSync('systemctl start certbot.timer', { stdio: 'pipe' });
     
-    const scriptPath = '/usr/local/bin/forge-ssl-setup';
-    await fs.writeFile(scriptPath, certbotScript);
-    execSync(`chmod +x ${scriptPath}`, { stdio: 'pipe' });
-    console.log(chalk.gray(`Created SSL setup script: ${scriptPath}`));
+    // Verify timer is active
+    const timerStatus = execSync('systemctl is-active certbot.timer', { encoding: 'utf8', stdio: 'pipe' }).trim();
+    if (timerStatus === 'active') {
+      console.log(chalk.green('✅ Automatic certificate renewal enabled'));
+    } else {
+      throw new Error('Failed to enable automatic renewal timer');
+    }
     
-    console.log(chalk.green('Certbot setup completed successfully'));
-    console.log(chalk.blue('📋 SSL Certificate Info:'));
-    console.log(chalk.gray('  • Certificates will be automatically requested for new deployments'));
-    console.log(chalk.gray('  • Automatic renewal is enabled via systemd timer'));
-    console.log(chalk.gray('  • Certificates are stored in /etc/letsencrypt/live/'));
-    console.log(chalk.gray('  • Manual certificate request: certbot --nginx -d yourdomain.com'));
+    // Test renewal process
+    console.log(chalk.gray('Testing certificate renewal process...'));
+    try {
+      execSync('certbot renew --dry-run --quiet', { stdio: 'pipe' });
+      console.log(chalk.green('✅ Certificate renewal test passed'));
+    } catch (error) {
+      console.log(chalk.yellow('⚠️  Certificate renewal test failed, but continuing...'));
+    }
     
   } catch (error) {
-    console.log(chalk.red(`Failed to setup SSL certificates: ${error}`));
-    throw error;
+    console.log(chalk.yellow(`Warning: Could not enable automatic renewal: ${error}`));
+    console.log(chalk.gray('You may need to set this up manually'));
   }
 }

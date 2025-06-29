@@ -244,10 +244,12 @@ export const deployCommand = new Command('deploy')
             projectPath,
             buildOutputDir: buildConfig.outputDirectory,
             publicIP
-          });        console.log(chalk.green('Local deployment started successfully!'));
-        console.log();
-        console.log(chalk.blue('📁 Project Information:'));
-        console.log(`  ${chalk.cyan('Project Path:')} ${projectPath}`);
+          });
+          
+          console.log(chalk.green('Local deployment started successfully!'));
+          console.log();
+          console.log(chalk.blue('📁 Project Information:'));
+          console.log(`  ${chalk.cyan('Project Path:')} ${projectPath}`);
         console.log(`  ${chalk.cyan('Framework:')} ${framework}`);
         console.log(`  ${chalk.cyan('Deployment ID:')} ${deployment.id}`);
         console.log();

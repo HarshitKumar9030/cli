@@ -78,4 +78,31 @@ export class ForgeApiService {
     const response: AxiosResponse<ApiResponse<any>> = await this.client.get('/api/health');
     return response.data;
   }
+
+  async createSubdomain(subdomainData: any): Promise<ApiResponse<any>> {
+    const response: AxiosResponse<ApiResponse<any>> = await this.client.post('/api/subdomains', subdomainData);
+    return response.data;
+  }
+
+  async updateSubdomain(deploymentId: string, publicIP: string): Promise<ApiResponse<any>> {
+    const response: AxiosResponse<ApiResponse<any>> = await this.client.put('/api/subdomains', {
+      deploymentId,
+      publicIP
+    });
+    return response.data;
+  }
+
+  async getSubdomains(filters?: any): Promise<ApiResponse<any>> {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.keys(filters).forEach(key => {
+        if (filters[key]) params.append(key, filters[key]);
+      });
+    }
+    
+    const response: AxiosResponse<ApiResponse<any>> = await this.client.get(
+      `/api/subdomains?${params.toString()}`
+    );
+    return response.data;
+  }
 }
