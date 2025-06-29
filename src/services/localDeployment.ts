@@ -73,7 +73,7 @@ export class LocalDeploymentManager {
       let sslConfigured = false;
       if (deploymentData.publicIP) {
         try {
-          sslConfigured = await this.setupSSLForDeployment(deploymentData.subdomain, deploymentData.publicIP);
+          sslConfigured = await this.setupSSLForDeployment(deploymentData.id, deploymentData.subdomain, deploymentData.publicIP);
           if (sslConfigured) {
             deployment.url = `https://${deploymentData.subdomain}.${this.BASE_DOMAIN}`;
             // Update nginx configuration to enable SSL
@@ -865,7 +865,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
    * Setup SSL certificate for a deployment using per-subdomain certificate
    * Returns true if SSL was successfully configured, false if skipped
    */
-  static async setupSSLForDeployment(subdomain: string, publicIP: string): Promise<boolean> {
+  static async setupSSLForDeployment(deploymentId: string, subdomain: string, publicIP: string): Promise<boolean> {
     if (os.platform() === 'win32') {
       console.log(chalk.yellow('SSL certificate setup skipped on Windows'));
       console.log(chalk.gray('Consider using Cloudflare or another reverse proxy for SSL'));
@@ -895,7 +895,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
         console.log(chalk.gray(`Certificate not found for ${domain}. Requesting new certificate...`));
         
         // Update Cloudflare DNS record for the subdomain first
-        await this.updateCloudflareRecord(subdomain, publicIP);
+        await this.updateCloudflareRecord(deploymentId, publicIP);
         
         // Wait a moment for DNS propagation
         console.log(chalk.gray('Waiting for DNS propagation...'));
@@ -912,7 +912,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
         console.log(chalk.green(`Existing SSL certificate found for ${domain}`));
         
         // Still update DNS record to ensure it points to correct IP
-        await this.updateCloudflareRecord(subdomain, publicIP);
+        await this.updateCloudflareRecord(deploymentId, publicIP);
       }
       
       // Test nginx configuration
@@ -961,18 +961,18 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
     try {
       const { execSync } = await import('child_process');
       
-      // Use certbot with standalone mode for initial certificate request
+      // Use nginx plugin since nginx is already running
       const certbotCommand = [
-        'certbot', 'certonly',
-        '--standalone',
+        'certbot', '--nginx',
+        '-d', domain,
         '--non-interactive',
         '--agree-tos',
         '--email', 'admin@agfe.tech',
-        '-d', domain,
-        '--cert-name', domain
+        '--cert-name', domain,
+        '--redirect'
       ].join(' ');
       
-      console.log(chalk.gray('Running certbot...'));
+      console.log(chalk.gray('Running certbot with nginx plugin...'));
       execSync(certbotCommand, { stdio: 'pipe' });
       
       console.log(chalk.green(`SSL certificate successfully obtained for ${domain}`));
@@ -981,7 +981,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`Certificate request failed: ${errorMessage}`));
       
-      // Try with webroot method as fallback
+      // Try with webroot method as fallback if nginx plugin fails
       console.log(chalk.gray('Trying webroot method as fallback...'));
       try {
         const fs = await import('fs-extra');
@@ -1003,7 +1003,39 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
         console.log(chalk.green(`SSL certificate successfully obtained for ${domain} (webroot method)`));
         
       } catch (fallbackError) {
-        throw new Error(`Both standalone and webroot certificate methods failed. ${fallbackError}`);
+        // Try one more fallback with manual challenge if both fail
+        console.log(chalk.gray('Trying manual HTTP challenge...'));
+        try {
+          // Stop nginx temporarily for standalone mode
+          execSync('systemctl stop nginx', { stdio: 'pipe' });
+          
+          const standaloneCommand = [
+            'certbot', 'certonly',
+            '--standalone',
+            '--non-interactive',
+            '--agree-tos',
+            '--email', 'admin@agfe.tech',
+            '-d', domain,
+            '--cert-name', domain
+          ].join(' ');
+          
+          execSync(standaloneCommand, { stdio: 'pipe' });
+          
+          // Restart nginx
+          execSync('systemctl start nginx', { stdio: 'pipe' });
+          
+          console.log(chalk.green(`SSL certificate successfully obtained for ${domain} (standalone method)`));
+          
+        } catch (standaloneError) {
+          // Make sure nginx is running even if standalone fails
+          try {
+            execSync('systemctl start nginx', { stdio: 'pipe' });
+          } catch {
+            // Ignore if nginx was already running
+          }
+          
+          throw new Error(`All certificate methods failed. Latest error: ${standaloneError}`);
+        }
       }
     }
   }
@@ -1011,9 +1043,9 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
   /**
    * Update Cloudflare DNS record for subdomain via API
    */
-  private static async updateCloudflareRecord(subdomain: string, publicIP: string): Promise<void> {
+  private static async updateCloudflareRecord(deploymentId: string, publicIP: string): Promise<void> {
     try {
-      console.log(chalk.gray(`Updating DNS record for ${subdomain}.agfe.tech -> ${publicIP} via API...`));
+      console.log(chalk.gray(`Updating DNS record for deployment ${deploymentId} -> ${publicIP} via API...`));
       
       // Get API service
       const { ConfigService } = await import('./config');
@@ -1030,13 +1062,13 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       apiService.setApiKey(globalConfig.apiKey);
       
       // Create or update subdomain via API
-      const response = await apiService.updateSubdomain(subdomain, publicIP);
+      const response = await apiService.updateSubdomain(deploymentId, publicIP);
       
       if (!response.success) {
         throw new Error(response.error?.message || 'Failed to update DNS record');
       }
       
-      console.log(chalk.green(`DNS record updated for ${subdomain}.agfe.tech`));
+      console.log(chalk.green(`DNS record updated for deployment ${deploymentId}`));
       
     } catch (error) {
       console.log(chalk.yellow(`Warning: Could not update DNS record: ${error}`));
