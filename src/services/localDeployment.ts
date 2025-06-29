@@ -3,6 +3,7 @@ import path from 'path';
 import { execSync, spawn, ChildProcess } from 'child_process';
 import chalk from 'chalk';
 import { getSystemIP, getPublicIP } from '../utils/system';
+import { performFirewallPreflightCheck } from '../utils/firewall';
 import { Framework } from '../types';
 import os from 'os';
 
@@ -65,15 +66,22 @@ export class LocalDeploymentManager {
       // Start the application
       await this.startApplication(deployment, deploymentData.buildOutputDir);
 
-      // Setup nginx configuration
-      await this.setupNginxConfig(deployment);
+      // Setup initial nginx configuration (HTTP-only)
+      await this.setupNginxConfig(deployment, false);
 
       // Setup SSL certificate if public IP is available
+      let sslConfigured = false;
       if (deploymentData.publicIP) {
         try {
-          await this.setupSSLForDeployment(deploymentData.subdomain, deploymentData.publicIP);
+          sslConfigured = await this.setupSSLForDeployment(deploymentData.subdomain, deploymentData.publicIP);
+          if (sslConfigured) {
+            deployment.url = `https://${deploymentData.subdomain}.${this.BASE_DOMAIN}`;
+            // Update nginx configuration to enable SSL
+            await this.setupNginxConfig(deployment, true);
+          }
         } catch (sslError) {
-          console.log(chalk.yellow(`SSL setup skipped: ${sslError}`));
+          console.log(chalk.yellow(`SSL setup failed: ${sslError}`));
+          sslConfigured = false;
         }
       }
 
@@ -81,14 +89,34 @@ export class LocalDeploymentManager {
       await this.saveDeployment(deployment);
 
       console.log(chalk.green('Local deployment configured successfully!'));
-      console.log(chalk.blue('Local Access:'));
+      console.log(chalk.blue('🌐 Access Information:'));
       console.log(`  ${chalk.cyan('Local URL:')} http://localhost:${port}`);
       console.log(`  ${chalk.cyan('Network URL:')} http://${localIP}:${port}`);
       console.log(`  ${chalk.cyan('Public URL:')} ${deployment.url}`);
-      console.log();
-      console.log(chalk.yellow('⚠️  For Public Access:'));
-      console.log(chalk.gray(`  • Open port ${port} on your firewall`));
-      console.log(chalk.gray(`  • Domain routing is handled automatically via API`));
+      
+      if (deploymentData.publicIP) {
+        console.log();
+        if (sslConfigured && deployment.url.startsWith('https://')) {
+          console.log(chalk.green('✅ SSL Certificate: Configured'));
+        } else {
+          console.log(chalk.yellow('⚠️  SSL Certificate: Not configured (using HTTP)'));
+          console.log(chalk.gray('   To enable SSL:'));
+          console.log(chalk.gray('   1. Configure firewall (see instructions above)'));
+          console.log(chalk.gray('   2. Run: forge infra --ssl'));
+          console.log(chalk.gray('   3. Redeploy: forge deploy <repo-url>'));
+        }
+        
+        console.log();
+        console.log(chalk.blue('🔒 Security Notes:'));
+        console.log(chalk.gray(`  • Firewall: Open ports ${port}, 80, and 443`));
+        console.log(chalk.gray(`  • DNS Management: Handled automatically via API`));
+        console.log(chalk.gray(`  • SSL Certificates: Managed by Let's Encrypt`));
+      } else {
+        console.log();
+        console.log(chalk.yellow('⚠️  For Public Access:'));
+        console.log(chalk.gray(`  • Open port ${port} on your firewall`));
+        console.log(chalk.gray(`  • Domain routing is handled automatically via API`));
+      }
 
       return deployment;
 
@@ -471,15 +499,15 @@ export class LocalDeploymentManager {
   /**
    * Setup nginx configuration for the deployment
    */
-  private static async setupNginxConfig(deployment: LocalDeployment): Promise<void> {
+  private static async setupNginxConfig(deployment: LocalDeployment, sslConfigured: boolean = false): Promise<void> {
     const { subdomain, port } = deployment;
     
     try {
       // Ensure nginx config directory exists
       await fs.ensureDir(this.NGINX_CONFIG_DIR);
       
-      // Generate nginx configuration
-      const nginxConfig = this.generateNginxConfig(subdomain, port);
+      // Generate nginx configuration for this specific subdomain
+      const nginxConfig = this.generateNginxConfig(subdomain, port, sslConfigured);
       
       const configPath = path.join(this.NGINX_CONFIG_DIR, `${subdomain}.conf`);
       await fs.writeFile(configPath, nginxConfig);
@@ -502,92 +530,43 @@ export class LocalDeploymentManager {
   }
 
   /**
-   * Generate nginx configuration for a deployment with wildcard SSL support and better security
+   * Generate nginx configuration for a specific subdomain deployment with per-subdomain SSL support
    */
-  private static generateNginxConfig(subdomain: string, port: number): string {
+  private static generateNginxConfig(subdomain: string, port: number, sslConfigured: boolean = false): string {
     const domain = `${subdomain}.agfe.tech`;
-    const baseDomain = 'agfe.tech';
     
-    return `# Forge deployment configuration for ${subdomain}
+    if (!sslConfigured) {
+      // Simple HTTP-only configuration
+      return `# Forge deployment configuration for ${subdomain}
 # Generated on ${new Date().toISOString()}
-# Wildcard SSL certificate: *.agfe.tech
+# HTTP-only configuration
 
-# Rate limiting zones
-limit_req_zone $binary_remote_addr zone=${subdomain}_ratelimit:10m rate=20r/s;
-limit_req_zone $binary_remote_addr zone=${subdomain}_login:10m rate=5r/m;
-
-# Upstream definition with health checks
+# Upstream definition
 upstream ${subdomain}_backend {
     server 127.0.0.1:${port} max_fails=3 fail_timeout=30s;
     keepalive 32;
 }
 
-# HTTP server - handles ACME challenges and redirects to HTTPS
+# HTTP server
 server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
     
-    # Security headers
+    # Basic security headers
     add_header X-Frame-Options DENY always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     
-    # Let's Encrypt ACME challenge location
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-        try_files $uri =404;
-    }
-    
-    # Health check endpoint (accessible via HTTP)
+    # Health check endpoint
     location /health {
         access_log off;
         return 200 "healthy\\n";
         add_header Content-Type text/plain;
     }
     
-    # Redirect all other HTTP traffic to HTTPS
+    # Main application proxy
     location / {
-        return 301 https://$server_name$request_uri;
-    }
-}
-
-# HTTPS server with wildcard certificate
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${domain};
-    
-    # Wildcard SSL certificate configuration
-    ssl_certificate /etc/letsencrypt/live/${baseDomain}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${baseDomain}/privkey.pem;
-    
-    # Include Let's Encrypt recommended SSL settings
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-    
-    # Enhanced security headers for HTTPS
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-    add_header X-Frame-Options DENY always;
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:;" always;
-    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
-    
-    # Rate limiting with different zones for different endpoints
-    location /auth {
-        limit_req zone=${subdomain}_login burst=10 nodelay;
-        # Continue to proxy...
-        proxy_pass http://${subdomain}_backend;
-        include /etc/nginx/proxy_params;
-    }
-    
-    location / {
-        limit_req zone=${subdomain}_ratelimit burst=50 nodelay;
-        
-        # Main application proxy
         proxy_pass http://${subdomain}_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -610,12 +589,87 @@ server {
         proxy_buffer_size 8k;
         proxy_buffers 16 8k;
         proxy_busy_buffers_size 16k;
-        
-        # Handle WebSocket connections
-        proxy_set_header Sec-WebSocket-Extensions $http_sec_websocket_extensions;
-        proxy_set_header Sec-WebSocket-Key $http_sec_websocket_key;
-        proxy_set_header Sec-WebSocket-Version $http_sec_websocket_version;
     }
+    
+    # Static file caching
+    location ~* \\.(jpg|jpeg|png|gif|ico|svg|webp|avif|css|js|woff|woff2|ttf|eot)$ {
+        proxy_pass http://${subdomain}_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+# Logging
+access_log /var/log/nginx/${subdomain}_access.log combined;
+error_log /var/log/nginx/${subdomain}_error.log warn;
+`;
+    }
+    
+    // HTTPS configuration with SSL certificate for this specific subdomain
+    return `# Forge deployment configuration for ${subdomain}
+# Generated on ${new Date().toISOString()}
+# HTTPS configuration with per-subdomain SSL certificate
+
+# Upstream definition
+upstream ${subdomain}_backend {
+    server 127.0.0.1:${port} max_fails=3 fail_timeout=30s;
+    keepalive 32;
+}
+
+# HTTP server - redirects to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    
+    # Let's Encrypt ACME challenge location
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files $uri =404;
+    }
+    
+    # Health check endpoint (accessible via HTTP)
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+    
+    # Redirect all other HTTP traffic to HTTPS
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
+}
+
+# HTTPS server with SSL certificate for this subdomain
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${domain};
+    
+    # SSL certificate configuration for this specific subdomain
+    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;
+    
+    # Modern SSL settings
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    # Security headers for HTTPS
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     
     # Health check endpoint
     location /health {
@@ -624,37 +678,47 @@ server {
         add_header Content-Type text/plain;
     }
     
-    # Static file optimization with proper caching
-    location ~* \\.(jpg|jpeg|png|gif|ico|svg|webp|avif)$ {
+    # Main application proxy
+    location / {
         proxy_pass http://${subdomain}_backend;
-        include /etc/nginx/proxy_params;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        add_header Vary "Accept-Encoding";
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_cache_bypass $http_upgrade;
+        
+        # Timeouts
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # Buffer settings
+        proxy_buffering on;
+        proxy_buffer_size 8k;
+        proxy_buffers 16 8k;
+        proxy_busy_buffers_size 16k;
     }
     
-    location ~* \\.(css|js|woff|woff2|ttf|eot)$ {
+    # Static file caching
+    location ~* \\.(jpg|jpeg|png|gif|ico|svg|webp|avif|css|js|woff|woff2|ttf|eot)$ {
         proxy_pass http://${subdomain}_backend;
-        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         expires 1y;
         add_header Cache-Control "public, immutable";
-        add_header Vary "Accept-Encoding";
-    }
-    
-    # API endpoints with stricter rate limiting
-    location /api/ {
-        limit_req zone=${subdomain}_ratelimit burst=30 nodelay;
-        
-        proxy_pass http://${subdomain}_backend;
-        include /etc/nginx/proxy_params;
-        
-        # API-specific headers
-        add_header X-API-Version "1.0" always;
     }
 }
 
-# Logging configuration with rotation
-access_log /var/log/nginx/${subdomain}_access.log combined buffer=16k flush=5m;
+# Logging
+access_log /var/log/nginx/${subdomain}_access.log combined;
 error_log /var/log/nginx/${subdomain}_error.log warn;
 `;
   }
@@ -791,41 +855,58 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
   }
 
   /**
-   * Setup SSL certificate for a deployment using wildcard certificate
+   * Setup SSL certificate for a deployment using per-subdomain certificate
+   * Returns true if SSL was successfully configured, false if skipped
    */
-  static async setupSSLForDeployment(subdomain: string, publicIP: string): Promise<void> {
+  static async setupSSLForDeployment(subdomain: string, publicIP: string): Promise<boolean> {
     if (os.platform() === 'win32') {
       console.log(chalk.yellow('SSL certificate setup skipped on Windows'));
       console.log(chalk.gray('Consider using Cloudflare or another reverse proxy for SSL'));
-      return;
+      return false;
     }
 
     const domain = `${subdomain}.agfe.tech`;
-    const baseDomain = 'agfe.tech';
     
     try {
-      console.log(chalk.cyan(`Setting up SSL for ${domain} using wildcard certificate...`));
+      console.log(chalk.cyan(`Setting up SSL certificate for ${domain}...`));
       
-      // Check if wildcard certificate exists
-      const certPath = `/etc/letsencrypt/live/${baseDomain}`;
+      // Quick firewall check before attempting SSL setup
+      console.log(chalk.gray('Performing quick SSL readiness check...'));
+      const firewallOk = await performFirewallPreflightCheck();
+      if (!firewallOk) {
+        console.log(chalk.yellow('⚠️  SSL setup skipped due to firewall issues.'));
+        console.log(chalk.gray('Your site will work over HTTP, but SSL certificates cannot be issued.'));
+        console.log(chalk.gray('Configure firewall as shown above, then redeploy for SSL.'));
+        return false;
+      }
+      
+      // Check if certificate for this specific subdomain exists
+      const certPath = `/etc/letsencrypt/live/${domain}`;
       const fs = await import('fs-extra');
       
       if (!await fs.pathExists(certPath)) {
-        console.log(chalk.yellow('Wildcard certificate not found. Setting up SSL infrastructure first...'));
+        console.log(chalk.gray(`Certificate not found for ${domain}. Requesting new certificate...`));
         
-        // Try to setup wildcard certificate
-        await this.setupWildcardCertificateIfNeeded();
+        // Update Cloudflare DNS record for the subdomain first
+        await this.updateCloudflareRecord(subdomain, publicIP);
+        
+        // Wait a moment for DNS propagation
+        console.log(chalk.gray('Waiting for DNS propagation...'));
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Request certificate for this specific subdomain
+        await this.requestSubdomainCertificate(domain);
         
         // Check again
         if (!await fs.pathExists(certPath)) {
-          throw new Error('Wildcard certificate setup failed. Run "forge infra --ssl" first.');
+          throw new Error(`Certificate request failed for ${domain}`);
         }
+      } else {
+        console.log(chalk.green(`Existing SSL certificate found for ${domain}`));
+        
+        // Still update DNS record to ensure it points to correct IP
+        await this.updateCloudflareRecord(subdomain, publicIP);
       }
-      
-      console.log(chalk.green('Wildcard SSL certificate found for *.agfe.tech'));
-      
-      // Update Cloudflare DNS record for the subdomain
-      await this.updateCloudflareRecord(subdomain, publicIP);
       
       // Test nginx configuration
       if (!await this.testNginxConfig()) {
@@ -840,19 +921,84 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       // Verify SSL is working
       await this.verifySSLConfiguration(domain);
       
+      return true;
+      
     } catch (error) {
       console.log(chalk.yellow(`Warning: SSL setup failed: ${error}`));
       console.log(chalk.gray('Your site will still work over HTTP'));
+      
+      // Provide helpful guidance based on error type
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Timeout during connect') || errorMessage.includes('firewall')) {
+        console.log(chalk.blue('💡 This looks like a firewall issue:'));
+        console.log(chalk.gray('  • Make sure ports 80 and 443 are open'));
+        console.log(chalk.gray('  • Check cloud provider firewall settings'));
+        console.log(chalk.gray('  • Run: forge infra --ssl (to recheck)'));
+      } else if (errorMessage.includes('DNS') || errorMessage.includes('domain')) {
+        console.log(chalk.blue('💡 This looks like a DNS issue:'));
+        console.log(chalk.gray('  • DNS may not have propagated yet'));
+        console.log(chalk.gray('  • Check if the subdomain resolves correctly'));
+        console.log(chalk.gray('  • Try again in a few minutes'));
+      }
+      
+      return false;
     }
   }
 
   /**
-   * Setup wildcard certificate if it doesn't exist
+   * Request SSL certificate for a specific subdomain using Let's Encrypt
    */
-  private static async setupWildcardCertificateIfNeeded(): Promise<void> {
-    console.log(chalk.yellow('Wildcard certificate setup is now handled during infrastructure setup.'));
-    console.log(chalk.gray('Run "forge infra --ssl" to set up SSL certificates.'));
-    throw new Error('SSL infrastructure not configured. Run "forge infra --ssl" first.');
+  private static async requestSubdomainCertificate(domain: string): Promise<void> {
+    console.log(chalk.gray(`Requesting SSL certificate for ${domain}...`));
+    
+    try {
+      const { execSync } = await import('child_process');
+      
+      // Use certbot with standalone mode for initial certificate request
+      const certbotCommand = [
+        'certbot', 'certonly',
+        '--standalone',
+        '--non-interactive',
+        '--agree-tos',
+        '--email', 'admin@agfe.tech',
+        '-d', domain,
+        '--cert-name', domain
+      ].join(' ');
+      
+      console.log(chalk.gray('Running certbot...'));
+      execSync(certbotCommand, { stdio: 'pipe' });
+      
+      console.log(chalk.green(`SSL certificate successfully obtained for ${domain}`));
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.log(chalk.red(`Certificate request failed: ${errorMessage}`));
+      
+      // Try with webroot method as fallback
+      console.log(chalk.gray('Trying webroot method as fallback...'));
+      try {
+        const fs = await import('fs-extra');
+        const webrootPath = '/var/www/html';
+        await fs.ensureDir(webrootPath);
+        
+        const webrootCommand = [
+          'certbot', 'certonly',
+          '--webroot',
+          '-w', webrootPath,
+          '--non-interactive',
+          '--agree-tos',
+          '--email', 'admin@agfe.tech',
+          '-d', domain,
+          '--cert-name', domain
+        ].join(' ');
+        
+        execSync(webrootCommand, { stdio: 'pipe' });
+        console.log(chalk.green(`SSL certificate successfully obtained for ${domain} (webroot method)`));
+        
+      } catch (fallbackError) {
+        throw new Error(`Both standalone and webroot certificate methods failed. ${fallbackError}`);
+      }
+    }
   }
 
   /**

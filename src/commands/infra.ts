@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { LocalDeploymentManager } from '../services/localDeployment';
 import { AutoRestartService } from '../services/autoRestart';
 import { checkSystemPrivileges, requireElevatedPrivileges, isWindows } from '../utils/system';
+import { performFirewallPreflightCheck } from '../utils/firewall';
 import os from 'os';
 
 export const infraCommand = new Command('infra')
@@ -13,12 +14,27 @@ export const infraCommand = new Command('infra')
   .option('--python', 'Setup Python dependencies (uvicorn, gunicorn, etc.)')
   .option('--ssl', 'Setup SSL certificates with Certbot')
   .option('--service', 'Setup auto-restart service')
+  .option('--check-firewall', 'Check firewall configuration for SSL readiness')
   .option('--all', 'Setup all infrastructure components')
   .action(async (options) => {
     try {
       console.log(chalk.blue.bold('🔧 Forge Infrastructure Setup'));
       console.log(chalk.gray('Setting up local deployment infrastructure...'));
       console.log();
+
+      // Handle firewall check command
+      if (options.checkFirewall) {
+        console.log(chalk.blue.bold('🔍 Firewall Configuration Check'));
+        const firewallOk = await performFirewallPreflightCheck();
+        if (firewallOk) {
+          console.log(chalk.green.bold('\n✅ Firewall is properly configured!'));
+          console.log(chalk.gray('SSL certificates can be issued successfully.'));
+        } else {
+          console.log(chalk.red.bold('\n❌ Firewall configuration needs attention.'));
+          console.log(chalk.gray('Follow the instructions above to configure your firewall.'));
+        }
+        return;
+      }
 
       // Check system privileges
       const hasElevatedPrivileges = checkSystemPrivileges();
@@ -156,10 +172,10 @@ export const infraCommand = new Command('infra')
         console.log(chalk.green.bold('🎉 Infrastructure setup completed successfully!'));
         console.log();
         console.log(chalk.blue('🚀 Next Steps:'));
-        console.log(chalk.gray('  1. Deploy your applications: forge deploy <repo-url>'));
-        console.log(chalk.gray('  2. Subdomains are automatically managed via API'));
-        console.log(chalk.gray('  3. SSL certificates are automatically provisioned'));
-        console.log(chalk.gray('  4. Configure firewall to allow HTTP/HTTPS traffic (ports 80, 443)'));
+        console.log(chalk.gray('  1. Check firewall: forge infra --check-firewall'));
+        console.log(chalk.gray('  2. Deploy your applications: forge deploy <repo-url>'));
+        console.log(chalk.gray('  3. Subdomains are automatically managed via API'));
+        console.log(chalk.gray('  4. SSL certificates are automatically provisioned'));
         console.log();
         console.log(chalk.blue('🔧 Management Commands:'));
         console.log(chalk.gray('  • forge status - Check all deployments'));
@@ -167,6 +183,10 @@ export const infraCommand = new Command('infra')
         console.log(chalk.gray('  • forge resume <deployment-id> - Resume a deployment'));
         console.log(chalk.gray('  • forge stop <deployment-id> - Stop a deployment'));
         console.log(chalk.gray('  • forge logs <deployment-id> - View deployment logs'));
+        console.log();
+        console.log(chalk.yellow('💡 SSL Troubleshooting:'));
+        console.log(chalk.gray('  • forge infra --check-firewall - Test firewall configuration'));
+        console.log(chalk.gray('  • forge infra --ssl - Reinstall SSL certificates'));
       } else {
         console.log(chalk.yellow('⚠️  Infrastructure setup completed with some errors'));
         console.log(chalk.gray('Check the error messages above and resolve them manually'));
@@ -614,6 +634,14 @@ async function setupSSLCertificates(): Promise<void> {
   
   console.log(chalk.gray('Setting up SSL certificate management with Certbot...'));
   
+  // Perform firewall preflight check
+  const firewallOk = await performFirewallPreflightCheck();
+  if (!firewallOk) {
+    console.log(chalk.red('❌ SSL setup cannot continue due to firewall issues.'));
+    console.log(chalk.yellow('Please configure your firewall as shown above, then retry.'));
+    throw new Error('Firewall configuration required for SSL setup');
+  }
+  
   try {
     // Install certbot
     await installCertbot();
@@ -626,14 +654,31 @@ async function setupSSLCertificates(): Promise<void> {
     
     console.log(chalk.green('SSL certificate management setup completed'));
     console.log(chalk.blue('📋 SSL Certificate Info:'));
-    console.log(chalk.gray('  • SSL certificates will be managed per deployment'));
+    console.log(chalk.gray('  • SSL certificates are generated per deployment/subdomain'));
     console.log(chalk.gray('  • Certificates are requested automatically during deployment'));
     console.log(chalk.gray('  • Automatic renewal is enabled via systemd timer'));
-    console.log(chalk.gray('  • Certificates are stored in /etc/letsencrypt/live/'));
+    console.log(chalk.gray('  • Certificates are stored in /etc/letsencrypt/live/<subdomain>/'));
     console.log(chalk.yellow('  • Note: Cloudflare DNS management is handled via API for security'));
     
   } catch (error) {
     console.log(chalk.red(`Failed to setup SSL certificates: ${error}`));
+    
+    // Provide helpful error guidance based on common issues
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('Timeout during connect')) {
+      console.log(chalk.yellow('\n🔍 Common SSL Certificate Issues:'));
+      console.log(chalk.gray('  • Firewall blocking ports 80/443 (most common)'));
+      console.log(chalk.gray('  • DNS not pointing to this server'));
+      console.log(chalk.gray('  • Service not running on port 80'));
+      console.log(chalk.gray('  • Rate limiting from Let\'s Encrypt'));
+      console.log();
+      console.log(chalk.blue('💡 Troubleshooting:'));
+      console.log(chalk.gray('  1. Run: forge infra --ssl (to recheck firewall)'));
+      console.log(chalk.gray('  2. Verify DNS: nslookup your-domain.com'));
+      console.log(chalk.gray('  3. Test port 80: curl -I http://your-domain.com'));
+      console.log(chalk.gray('  4. Check nginx: systemctl status nginx'));
+    }
+    
     throw error;
   }
 }
@@ -765,15 +810,41 @@ if certbot certificates 2>/dev/null | grep -q "$DOMAIN"; then
     exit 0
 fi
 
+# Enhanced firewall and accessibility check
+echo "Checking if ports 80 and 443 are accessible..."
+if ! timeout 10 bash -c "echo >/dev/tcp/$PUBLIC_IP/80" 2>/dev/null; then
+    echo "❌ ERROR: Port 80 is not accessible from the internet!"
+    echo "This will prevent Let's Encrypt from issuing certificates."
+    echo ""
+    echo "🔧 Firewall Configuration Required:"
+    echo "  • GCP: Enable 'Allow HTTP traffic' in Compute Engine firewall"
+    echo "  • AWS: Add HTTP (port 80) to Security Group inbound rules"
+    echo "  • Azure: Add HTTP (port 80) to Network Security Group"
+    echo "  • Other: Configure firewall to allow TCP port 80 from 0.0.0.0/0"
+    echo ""
+    echo "After configuring firewall, wait 2-3 minutes and retry deployment."
+    exit 1
+fi
+
+if ! timeout 10 bash -c "echo >/dev/tcp/$PUBLIC_IP/443" 2>/dev/null; then
+    echo "⚠️  WARNING: Port 443 is not accessible (will be needed after SSL setup)"
+fi
+
 # Wait for DNS propagation if needed
 echo "Checking DNS resolution for $DOMAIN..."
 for i in {1..30}; do
     if nslookup "$DOMAIN" >/dev/null 2>&1; then
-        echo "DNS resolution successful for $DOMAIN"
-        break
+        resolved_ip=$(nslookup "$DOMAIN" | grep -A1 "Name:" | tail -n1 | awk '{print $2}' | head -1)
+        if [ "$resolved_ip" = "$PUBLIC_IP" ]; then
+            echo "✅ DNS resolution successful for $DOMAIN -> $PUBLIC_IP"
+            break
+        else
+            echo "⚠️  DNS resolves to $resolved_ip, expected $PUBLIC_IP"
+        fi
     fi
     if [ $i -eq 30 ]; then
-        echo "Warning: DNS resolution failed for $DOMAIN, but proceeding anyway..."
+        echo "Warning: DNS resolution issues for $DOMAIN, but proceeding anyway..."
+        echo "Make sure your DNS points to $PUBLIC_IP"
     fi
     sleep 2
 done
