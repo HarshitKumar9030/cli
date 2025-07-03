@@ -5,7 +5,7 @@ export class ForgeApiService {
   private client: AxiosInstance;
   private apiKey?: string;
 
-  constructor(baseURL: string = 'https://api.agfe.tech') {
+  constructor(baseURL: string = 'https://api.forgecli.tech') {
     this.client = axios.create({
       baseURL,
       headers: {

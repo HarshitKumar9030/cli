@@ -25,7 +25,7 @@ export class LocalDeploymentManager {
   private static readonly DEPLOYMENTS_FILE = path.join(process.cwd(), 'forge-deployments.json');
   private static readonly MIN_PORT = 3000;
   private static readonly MAX_PORT = 9999;
-  private static readonly BASE_DOMAIN = 'agfe.tech';
+  private static readonly BASE_DOMAIN = 'forgecli.tech';
   private static readonly NGINX_CONFIG_DIR = os.platform() === 'win32' 
     ? 'C:\\nginx\\conf\\forge-sites'
     : '/etc/nginx/forge-sites';
@@ -89,7 +89,7 @@ export class LocalDeploymentManager {
       await this.saveDeployment(deployment);
 
       console.log(chalk.green('Local deployment configured successfully!'));
-      console.log(chalk.blue('🌐 Access Information:'));
+      console.log(chalk.blue('Access Information:'));
       console.log(`  ${chalk.cyan('Local URL:')} http://localhost:${port}`);
       console.log(`  ${chalk.cyan('Network URL:')} http://${localIP}:${port}`);
       console.log(`  ${chalk.cyan('Public URL:')} ${deployment.url}`);
@@ -97,9 +97,9 @@ export class LocalDeploymentManager {
       if (deploymentData.publicIP) {
         console.log();
         if (sslConfigured && deployment.url.startsWith('https://')) {
-          console.log(chalk.green('✅ SSL Certificate: Configured'));
+          console.log(chalk.green('SSL Certificate: Configured'));
         } else {
-          console.log(chalk.yellow('⚠️  SSL Certificate: Not configured (using HTTP)'));
+          console.log(chalk.yellow('SSL Certificate: Not configured (using HTTP)'));
           console.log(chalk.gray('   To enable SSL:'));
           console.log(chalk.gray('   1. Configure firewall (see instructions above)'));
           console.log(chalk.gray('   2. Run: forge infra --ssl'));
@@ -107,13 +107,13 @@ export class LocalDeploymentManager {
         }
         
         console.log();
-        console.log(chalk.blue('🔒 Security Notes:'));
+        console.log(chalk.blue('Security Notes:'));
         console.log(chalk.gray(`  • Firewall: Open ports ${port}, 80, and 443`));
         console.log(chalk.gray(`  • DNS Management: Handled automatically via API`));
         console.log(chalk.gray(`  • SSL Certificates: Managed by Let's Encrypt`));
       } else {
         console.log();
-        console.log(chalk.yellow('⚠️  For Public Access:'));
+        console.log(chalk.yellow('For Public Access:'));
         console.log(chalk.gray(`  • Open port ${port} on your firewall`));
         console.log(chalk.gray(`  • Domain routing is handled automatically via API`));
       }
@@ -152,6 +152,21 @@ export class LocalDeploymentManager {
           startScript = 'npx serve -s . -p ' + port;
         } else {
           startScript = 'npm start';
+        }
+        break;
+
+      case Framework.VITE:
+        if (buildOutputDir) {
+          cwd = path.join(projectPath, buildOutputDir);
+          startScript = 'npx serve -s . -p ' + port;
+        } else {
+          const distPath = path.join(projectPath, 'dist');
+          if (await this.hasFile(projectPath, 'dist')) {
+            cwd = distPath;
+            startScript = 'npx serve -s . -p ' + port;
+          } else {
+            startScript = 'npm run preview || npm run dev -- --port ' + port + ' --host 0.0.0.0';
+          }
         }
         break;
 
@@ -203,6 +218,15 @@ export class LocalDeploymentManager {
           // FastAPI or generic Python
           startScript = 'uvicorn main:app --host 0.0.0.0 --port ' + port;
           interpreter = 'none';
+        } else if (await this.hasFile(projectPath, 'vite.config.js') || await this.hasFile(projectPath, 'vite.config.ts')) {
+          // Vite project detected
+          const distPath = path.join(projectPath, 'dist');
+          if (await this.hasFile(projectPath, 'dist')) {
+            cwd = distPath;
+            startScript = 'npx serve -s . -p ' + port;
+          } else {
+            startScript = 'npm run preview || npm run dev -- --port ' + port + ' --host 0.0.0.0';
+          }
         } else {
           // Generic static file serving
           startScript = 'npx serve -s . -p ' + port;
@@ -536,7 +560,7 @@ export class LocalDeploymentManager {
    * Generate nginx configuration for a specific subdomain deployment with per-subdomain SSL support
    */
   private static generateNginxConfig(subdomain: string, port: number, sslConfigured: boolean = false): string {
-    const domain = `${subdomain}.agfe.tech`;
+    const domain = `${subdomain}.forgecli.tech`;
     
     if (!sslConfigured) {
       // Simple HTTP-only configuration
@@ -872,7 +896,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       return false;
     }
 
-    const domain = `${subdomain}.agfe.tech`;
+    const domain = `${subdomain}.forgecli.tech`;
     
     try {
       console.log(chalk.cyan(`Setting up SSL certificate for ${domain}...`));
@@ -881,7 +905,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       console.log(chalk.gray('Performing quick SSL readiness check...'));
       const firewallOk = await performFirewallPreflightCheck();
       if (!firewallOk) {
-        console.log(chalk.yellow('⚠️  SSL setup skipped due to firewall issues.'));
+        console.log(chalk.yellow('SSL setup skipped due to firewall issues.'));
         console.log(chalk.gray('Your site will work over HTTP, but SSL certificates cannot be issued.'));
         console.log(chalk.gray('Configure firewall as shown above, then redeploy for SSL.'));
         return false;
@@ -967,7 +991,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
         '-d', domain,
         '--non-interactive',
         '--agree-tos',
-        '--email', 'admin@agfe.tech',
+        '--email', 'admin@forgecli.tech',
         '--cert-name', domain,
         '--redirect'
       ].join(' ');
@@ -994,7 +1018,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
           '-w', webrootPath,
           '--non-interactive',
           '--agree-tos',
-          '--email', 'admin@agfe.tech',
+          '--email', 'admin@forgecli.tech',
           '-d', domain,
           '--cert-name', domain
         ].join(' ');
@@ -1014,7 +1038,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
             '--standalone',
             '--non-interactive',
             '--agree-tos',
-            '--email', 'admin@agfe.tech',
+            '--email', 'admin@forgecli.tech',
             '-d', domain,
             '--cert-name', domain
           ].join(' ');
@@ -1112,6 +1136,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       case Framework.NEXTJS:
       case Framework.REACT:
       case Framework.VUE:
+      case Framework.VITE:
       case Framework.ANGULAR:
       case Framework.EXPRESS:
       case Framework.FASTIFY:

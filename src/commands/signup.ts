@@ -21,7 +21,7 @@ export async function signupCommand(options: SignupOptions): Promise<void> {
     let apiUrl = options.apiUrl;
     if (!apiUrl) {
       const globalConfig = await configService.loadGlobalConfig();
-      apiUrl = globalConfig?.apiUrl || 'https://api.agfe.tech';
+      apiUrl = globalConfig?.apiUrl || 'https://api.forgecli.tech';
     }
 
     const apiService = new ForgeApiService(apiUrl);

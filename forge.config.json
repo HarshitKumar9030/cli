@@ -1,5 +1,5 @@
 {
-  "apiUrl": "https://api.agfe.tech",
+  "apiUrl": "https://api.forgecli.tech",
   "projectName": "nextjs-portfolio-starter",
   "framework": "next.js",
   "buildCommand": "npm run build",

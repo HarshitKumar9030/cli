@@ -90,6 +90,7 @@ export enum Framework {
   NEXTJS = 'next.js',
   REACT = 'react',
   VUE = 'vue',
+  VITE = 'vite',
   NUXT = 'nuxt',
   SVELTE = 'svelte',
   ANGULAR = 'angular',

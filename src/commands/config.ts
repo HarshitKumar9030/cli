@@ -152,7 +152,7 @@ async function interactiveConfig(configService: ConfigService): Promise<void> {
         type: 'input',
         name: 'apiUrl',
         message: 'API URL:',
-        default: globalConfig.apiUrl || 'https://api.agfe.tech'
+        default: globalConfig.apiUrl || 'https://api.forgecli.tech'
       }
     ]);
 

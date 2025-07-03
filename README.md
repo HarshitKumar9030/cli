@@ -141,7 +141,7 @@ forge infra --all              # Setup Forge infrastructure
 ### DNS Setup
 Point your domain to your server IP:
 ```
-*.agfe.tech → YOUR_SERVER_IP
+*.forgecli.tech → YOUR_SERVER_IP
 ```
 
 ### Firewall

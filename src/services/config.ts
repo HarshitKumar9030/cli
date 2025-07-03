@@ -27,7 +27,7 @@ export class ConfigService {
       return config;
     } catch (error) {
       return {
-        apiUrl: 'https://api.agfe.tech'
+        apiUrl: 'https://api.forgecli.tech'
       };
     }
   }
@@ -44,7 +44,7 @@ export class ConfigService {
       return config;
     } catch (error) {
       return {
-        apiUrl: 'https://api.agfe.tech'
+        apiUrl: 'https://api.forgecli.tech'
       };
     }
   }
