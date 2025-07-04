@@ -141,7 +141,7 @@ export function checkSystemPrivileges(): boolean {
   const elevated = isElevated();
   
   if (!elevated) {
-    console.log(chalk.yellow('⚠️  System Infrastructure Setup Warning:'));
+    console.log(chalk.yellow('WARNING: System Infrastructure Setup Warning:'));
     
     if (isWindows()) {
       console.log(chalk.gray('  For full infrastructure setup, run PowerShell as Administrator:'));
@@ -165,7 +165,7 @@ export function checkSystemPrivileges(): boolean {
  */
 export function requireElevatedPrivileges(command: string): void {
   if (!isElevated()) {
-    console.log(chalk.red(`❌ ${command} requires elevated privileges`));
+    console.log(chalk.red(`ERROR: ${command} requires elevated privileges`));
     console.log();
     
     if (isWindows()) {

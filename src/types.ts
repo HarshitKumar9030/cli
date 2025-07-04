@@ -4,9 +4,38 @@ export interface ForgeConfig {
   projectName?: string;
   framework?: string;
   buildCommand?: string;
+  buildSteps?: BuildStep[]; // Enhanced: Multiple build steps
   outputDirectory?: string;
   environmentVariables?: Record<string, string>;
   deploymentId?: string;
+  workspaceSetup?: WorkspaceSetup; // Enhanced: Workspace configuration
+}
+
+export interface BuildStep {
+  name: string;
+  command: string;
+  workingDirectory?: string;
+  environment?: Record<string, string>;
+  optional?: boolean;
+  timeout?: number; // in seconds
+  retries?: number;
+}
+
+export interface WorkspaceSetup {
+  packageManager: 'npm' | 'yarn' | 'pnpm' | 'bun';
+  installCommand: string; // Make this required, not optional
+  postInstallSteps?: BuildStep[];
+  preDeploySteps?: BuildStep[];
+  buildSteps?: BuildStep[]; // Add buildSteps property
+  postDeploySteps?: BuildStep[];
+  monorepo?: MonorepoConfig;
+}
+
+export interface MonorepoConfig {
+  type: 'nx' | 'lerna' | 'rush' | 'turbo' | 'custom';
+  rootPackageJson: string;
+  projectPath?: string; // relative to root
+  buildTarget?: string; // e.g., 'build:prod', 'build:web'
 }
 
 export interface DeploymentOptions {

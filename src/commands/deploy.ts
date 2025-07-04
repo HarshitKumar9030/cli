@@ -8,6 +8,7 @@ import { ConfigService } from '../services/config';
 import { ForgeApiService } from '../services/api';
 import { GitService } from '../services/git';
 import { LocalDeploymentManager } from '../services/localDeployment';
+import { WorkspaceManager } from '../services/workspaceManager';
 import { startAPIServer } from '../services/apiServer';
 import { getSystemIP, getPublicIP, checkSystemPrivileges } from '../utils/system';
 import { Framework } from '../types';
@@ -18,6 +19,8 @@ export const deployCommand = new Command('deploy')
   .option('-b, --branch <branch>', 'Git branch to deploy', 'main')
   .option('-e, --environment <env>', 'Target environment', 'production')
   .option('--skip-build', 'Skip the build step')
+  .option('--skip-workspace-setup', 'Skip interactive workspace configuration')
+  .option('--use-workspace-config', 'Use existing workspace configuration from forge.config.json')
   .option('-f, --force', 'Force deployment even if checks fail')
   .option('--subdomain <subdomain>', 'Custom subdomain (for web projects)')
   .action(async (source, options) => {
@@ -147,14 +150,51 @@ export const deployCommand = new Command('deploy')
       // Build configuration
       const buildConfig = await getBuildConfiguration(framework, projectPath);
 
-      // Install dependencies if package.json exists
+      // Initialize workspace setup variable
+      let workspaceSetup;
+
+      // Enhanced workspace setup and build process
       if (!options.skipBuild) {
         const packageJsonPath = path.join(projectPath, 'package.json');
         if (await fs.pathExists(packageJsonPath)) {
+          
+          // Initialize workspace manager
+          const workspaceManager = new WorkspaceManager(projectPath);
+
+          // Check for existing workspace configuration
+          const existingConfig = await configService.loadProjectConfig();
+          
+          if (options.useWorkspaceConfig && existingConfig?.workspaceSetup) {
+            console.log(chalk.green('Using existing workspace configuration'));
+            workspaceSetup = existingConfig.workspaceSetup;
+          } else if (!options.skipWorkspaceSetup) {
+            // Interactive workspace setup
+            console.log();
+            console.log(chalk.blue('Analyzing workspace...'));
+            
+            try {
+              workspaceSetup = await workspaceManager.interactiveSetup();
+              
+              // Save workspace setup to config
+              const currentConfig = await configService.loadProjectConfig() || {};
+              currentConfig.workspaceSetup = workspaceSetup;
+              await configService.saveProjectConfig(currentConfig);
+              
+              console.log(chalk.green('Workspace configuration saved'));
+            } catch (error) {
+              console.log(chalk.yellow('Workspace analysis failed, falling back to simple build'));
+              workspaceSetup = await workspaceManager.analyzeWorkspace();
+            }
+          } else {
+            // Auto-detect workspace setup without interaction
+            console.log(chalk.cyan('Auto-detecting workspace setup...'));
+            workspaceSetup = await workspaceManager.analyzeWorkspace();
+          }
+
+          // Install dependencies
           console.log(chalk.cyan('Installing dependencies...'));
           try {
-            // Use npm for consistency
-            execSync('npm install', { 
+            execSync(workspaceSetup.installCommand, { 
               stdio: 'inherit', 
               cwd: projectPath 
             });
@@ -166,24 +206,55 @@ export const deployCommand = new Command('deploy')
             }
             console.log(chalk.yellow('Continuing deployment due to --force flag'));
           }
-        }
-      }
 
-      // Build project if not skipped
-      if (!options.skipBuild && buildConfig.buildCommand) {
-        console.log(chalk.cyan('Building project...'));
-        try {
-          execSync(buildConfig.buildCommand, { 
-            stdio: 'inherit', 
-            cwd: projectPath 
-          });
-          console.log(chalk.green('Build completed successfully'));
-        } catch (error) {
-          console.log(chalk.red('Build failed'));
-          if (!options.force) {
-            process.exit(1);
+          // Execute pre-deploy steps
+          if (workspaceSetup.preDeploySteps && workspaceSetup.preDeploySteps.length > 0) {
+            console.log();
+            console.log(chalk.blue('Executing pre-deploy steps...'));
+            try {
+              await workspaceManager.executeWorkflow(workspaceSetup.preDeploySteps);
+            } catch (error) {
+              console.log(chalk.red('Pre-deploy steps failed'));
+              if (!options.force) {
+                process.exit(1);
+              }
+              console.log(chalk.yellow('Continuing deployment due to --force flag'));
+            }
           }
-          console.log(chalk.yellow('Continuing deployment due to --force flag'));
+
+          // Build project if build command exists
+          if (buildConfig.buildCommand) {
+            console.log();
+            console.log(chalk.cyan('Building project...'));
+            try {
+              execSync(buildConfig.buildCommand, { 
+                stdio: 'inherit', 
+                cwd: projectPath 
+              });
+              console.log(chalk.green('Build completed successfully'));
+            } catch (error) {
+              console.log(chalk.red('Build failed'));
+              if (!options.force) {
+                process.exit(1);
+              }
+              console.log(chalk.yellow('Continuing deployment due to --force flag'));
+            }
+          }
+
+          // Execute build steps if defined (alternative to single build command)
+          if (workspaceSetup.buildSteps && workspaceSetup.buildSteps.length > 0) {
+            console.log();
+            console.log(chalk.blue('Executing custom build steps...'));
+            try {
+              await workspaceManager.executeWorkflow(workspaceSetup.buildSteps);
+            } catch (error) {
+              console.log(chalk.red('Custom build steps failed'));
+              if (!options.force) {
+                process.exit(1);
+              }
+              console.log(chalk.yellow('Continuing deployment due to --force flag'));
+            }
+          }
         }
       }
 
@@ -220,7 +291,7 @@ export const deployCommand = new Command('deploy')
         console.log(`  ${chalk.cyan('Framework:')} ${framework}`);
         console.log();
 
-        // Save deployment configuration
+        // Save deployment configuration including workspace setup
         const projectConfig = {
           projectName,
           framework,
@@ -228,7 +299,8 @@ export const deployCommand = new Command('deploy')
           outputDirectory: buildConfig.outputDirectory,
           environmentVariables: buildConfig.environmentVariables,
           deploymentId: deployment.id,
-          subdomain: deployment.subdomain
+          subdomain: deployment.subdomain,
+          ...(workspaceSetup && { workspaceSetup })
         };
 
         await configService.saveProjectConfig(projectConfig);
@@ -259,21 +331,21 @@ export const deployCommand = new Command('deploy')
           }
           
           console.log();
-          console.log(chalk.blue('📁 Project Information:'));
+          console.log(chalk.blue('Project Information:'));
           console.log(`  ${chalk.cyan('Project Path:')} ${projectPath}`);
         console.log(`  ${chalk.cyan('Framework:')} ${framework}`);
         console.log(`  ${chalk.cyan('Deployment ID:')} ${deployment.id}`);
         console.log();
-        console.log(chalk.blue('🚀 Access Your Application:'));
+        console.log(chalk.blue('Access Your Application:'));
         console.log(`  ${chalk.cyan('Local:')} http://localhost:${localDeployment.port}`);
         console.log(`  ${chalk.cyan('Network:')} http://${localIP}:${localDeployment.port}`);
         console.log(`  ${chalk.cyan('Public:')} ${localDeployment.url}`);
         console.log();
-        console.log(chalk.yellow('🔧 For Public Access:'));
+        console.log(chalk.yellow('For Public Access:'));
         console.log(`  ${chalk.gray('1. Open port')} ${localDeployment.port} ${chalk.gray('in your firewall')}`);
         console.log(`  ${chalk.gray('2. Domain routing is handled automatically')}`);
         console.log();
-        console.log(chalk.blue('⚡ Pro Tips:'));
+        console.log(chalk.blue('Pro Tips:'));
         console.log(`  ${chalk.cyan('forge infra --all')} - Setup nginx & PM2 for better management`);
         console.log(`  ${chalk.cyan('forge status')} - Check all deployment status`);
         console.log(`  ${chalk.cyan('forge pause')} - Pause this deployment`);
@@ -281,7 +353,7 @@ export const deployCommand = new Command('deploy')
         console.log(`  ${chalk.cyan('forge logs')} - View deployment logs`);
 
         } catch (localError) {
-          console.log(chalk.yellow('⚠️  Local deployment failed, but remote deployment created'));
+          console.log(chalk.yellow('WARNING: Local deployment failed, but remote deployment created'));
           console.log(chalk.gray(`Local error: ${localError}`));
           console.log(chalk.gray('Use "forge status" to check deployment progress'));
           console.log(chalk.gray('Use "forge logs" to view deployment logs'));

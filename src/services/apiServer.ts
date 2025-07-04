@@ -2,6 +2,143 @@ import http from 'http';
 import url from 'url';
 import { LocalDeploymentManager } from './localDeployment';
 import chalk from 'chalk';
+import fs from 'fs-extra';
+import { execSync } from 'child_process';
+import { isWindows } from '../utils/system';
+
+/**
+ * Check SSL certificate status by examining nginx config and certificate files
+ */
+async function checkSSLStatus(subdomain: string): Promise<{
+  enabled: boolean;
+  certificate?: string;
+  expiresAt?: string;
+  issuer?: string;
+  validFrom?: string;
+  daysUntilExpiry?: number;
+}> {
+  try {
+    const nginxConfigPath = isWindows() 
+      ? `C:\\nginx\\conf\\sites-available\\${subdomain}.conf`
+      : `/etc/nginx/sites-available/${subdomain}.conf`;
+
+    // Check if nginx config exists and has SSL configuration
+    if (!await fs.pathExists(nginxConfigPath)) {
+      return { enabled: false };
+    }
+
+    const nginxConfig = await fs.readFile(nginxConfigPath, 'utf8');
+    
+    // Check for SSL configuration in nginx
+    const hasSSLConfig = nginxConfig.includes('ssl_certificate') && nginxConfig.includes('ssl_certificate_key');
+    
+    if (!hasSSLConfig) {
+      return { enabled: false };
+    }
+
+    // Extract certificate path from nginx config
+    const certPathMatch = nginxConfig.match(/ssl_certificate\s+([^;]+);/);
+    const certPath = certPathMatch ? certPathMatch[1].trim().replace(/['"]/g, '') : null;
+
+    if (!certPath || !await fs.pathExists(certPath)) {
+      return { enabled: true, certificate: 'Configuration found but certificate file missing' };
+    }
+
+    // Get certificate information using openssl
+    try {
+      const certInfo = execSync(`openssl x509 -in "${certPath}" -text -noout`, { 
+        encoding: 'utf8',
+        timeout: 5000 
+      });
+
+      const notAfterMatch = certInfo.match(/Not After : (.+)/);
+      const notBeforeMatch = certInfo.match(/Not Before: (.+)/);
+      const issuerMatch = certInfo.match(/Issuer: (.+)/);
+
+      let expiresAt, validFrom, issuer, daysUntilExpiry;
+
+      if (notAfterMatch) {
+        expiresAt = new Date(notAfterMatch[1]).toISOString();
+        daysUntilExpiry = Math.ceil((new Date(notAfterMatch[1]).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      }
+
+      if (notBeforeMatch) {
+        validFrom = new Date(notBeforeMatch[1]).toISOString();
+      }
+
+      if (issuerMatch) {
+        issuer = issuerMatch[1].trim();
+      }
+
+      return {
+        enabled: true,
+        certificate: certPath,
+        expiresAt,
+        validFrom,
+        issuer,
+        daysUntilExpiry
+      };
+
+    } catch (opensslError) {
+      // If openssl fails, try alternative method
+      try {
+        const certInfo = execSync(`openssl x509 -in "${certPath}" -enddate -issuer -startdate -noout`, { 
+          encoding: 'utf8',
+          timeout: 5000 
+        });
+
+        const lines = certInfo.split('\n');
+        let expiresAt, validFrom, issuer, daysUntilExpiry;
+
+        for (const line of lines) {
+          if (line.startsWith('notAfter=')) {
+            const dateStr = line.replace('notAfter=', '');
+            expiresAt = new Date(dateStr).toISOString();
+            daysUntilExpiry = Math.ceil((new Date(dateStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          } else if (line.startsWith('notBefore=')) {
+            const dateStr = line.replace('notBefore=', '');
+            validFrom = new Date(dateStr).toISOString();
+          } else if (line.startsWith('issuer=')) {
+            issuer = line.replace('issuer=', '');
+          }
+        }
+
+        return {
+          enabled: true,
+          certificate: certPath,
+          expiresAt,
+          validFrom,
+          issuer,
+          daysUntilExpiry
+        };
+
+      } catch (fallbackError) {
+        return { 
+          enabled: true, 
+          certificate: certPath,
+          expiresAt: 'Unable to read certificate details',
+        };
+      }
+    }
+
+  } catch (error) {
+    // Fallback: check if HTTPS is working by making a request
+    try {
+      const domain = `${subdomain}.forgecli.tech`;
+      const response = await fetch(`https://${domain}`, { 
+        signal: AbortSignal.timeout(5000),
+        method: 'HEAD'
+      });
+      
+      return { 
+        enabled: response.ok, 
+        certificate: 'SSL working but certificate details unavailable' 
+      };
+    } catch {
+      return { enabled: false };
+    }
+  }
+}
 
 export class ForgeAPIServer {
   private server: http.Server | null = null;
@@ -121,12 +258,19 @@ export class ForgeAPIServer {
       }
     }
 
+    // Check SSL status if domain is configured
+    let sslStatus;
+    if (deployment.subdomain) {
+      sslStatus = await checkSSLStatus(deployment.subdomain);
+    }
+
     // Get recent logs
     const logs = [
       `[${new Date().toISOString()}] Status check completed - ${deployment.status}`,
       `[${new Date(Date.now() - 60000).toISOString()}] Resource usage: CPU ${deployment.resources?.cpu?.toFixed(1) || 0}%, Memory ${deployment.resources?.memory?.toFixed(1) || 0}%`,
       `[${new Date(Date.now() - 120000).toISOString()}] Disk usage: ${deployment.resources?.diskUsed ? (deployment.resources.diskUsed / (1024 * 1024 * 1024)).toFixed(2) : 0}GB`,
       `[${new Date(Date.now() - 180000).toISOString()}] Health check: ${healthStatus}`,
+      `[${new Date(Date.now() - 240000).toISOString()}] SSL status: ${sslStatus?.enabled ? 'enabled' : 'disabled'}${sslStatus?.daysUntilExpiry ? ` (expires in ${sslStatus.daysUntilExpiry} days)` : ''}`,
       `[${new Date(Date.now() - 300000).toISOString()}] Process ${deployment.pid ? 'running' : 'not found'} on port ${deployment.port}`
     ];
 
@@ -140,7 +284,8 @@ export class ForgeAPIServer {
           responseTime,
           lastCheck: new Date().toISOString()
         },
-        logs
+        logs,
+        ssl: sslStatus
       }
     });
   }
