@@ -1,251 +1,163 @@
 # Forge CLI
 
-A powerful command-line interface for deploying and managing applications locally with automatic subdomain routing, process management, and infrastructure setup.
+Professional command-line interface for deploying and managing applications locally with automatic subdomain routing, SSL certificates, and infrastructure management.
 
 ## Installation
 
-### Standard Installation
 ```bash
 npm install -g forge-deploy-cli
 ```
 
-### Recommended: Installation with System Privileges
-
-For full infrastructure setup (nginx, system services), install with elevated privileges:
-
-#### Windows
-```powershell
-# Run PowerShell as Administrator
-npm install -g forge-deploy-cli
-```
-
-#### Linux/macOS
-```bash
-# Install with sudo for system-wide infrastructure setup
-sudo npm install -g forge-deploy-cli
-```
+> **Note**: For full infrastructure setup (nginx, SSL), run with admin privileges on Windows or `sudo` on Linux/macOS.
 
 ## Quick Start
 
-### 1. Setup Infrastructure (Recommended)
 ```bash
-# Setup all infrastructure components with elevated privileges
-sudo forge infra --all          # Linux/macOS
-# OR (Windows as Administrator)
+# 1. Setup infrastructure
 forge infra --all
 
-# Or setup components individually
-forge infra --pm2               # Process manager
-forge infra --nginx             # Reverse proxy (requires admin/sudo)
-forge infra --nodejs            # Node.js dependencies
-forge infra --python            # Python dependencies
-forge infra --service           # Auto-restart service
-```
-
-### 2. Authenticate and Deploy
-```bash
-# Authenticate
+# 2. Authenticate
 forge login
 
-# Deploy from GitHub
-forge deploy https://github.com/username/repository
+# 3. Deploy application
+forge deploy https://github.com/HarshitKumar9030/Advanced-Calculator
 
-# Deploy from local directory
-forge deploy ./my-app
-
-# Check deployment status
+# 4. Check status
 forge status
-
-# View logs
-forge logs
-
-# Stop deployment
-forge stop
 ```
 
-## Features
+Your app will be available at `https://subdomain.forgecli.tech` with automatic SSL certificates.
 
-- ✅ **Local Deployments** - Deploy apps locally with auto-generated subdomains
-- ✅ **Process Management** - PM2 integration for robust process handling
-- ✅ **Reverse Proxy** - Nginx configuration for subdomain routing
-- ✅ **Auto-Restart** - System service for deployment persistence
-- ✅ **Framework Detection** - Supports Next.js, React, Vue, Node.js, Python, PHP, and more
-- ✅ **Git Integration** - Clone and deploy from repositories
-- ✅ **Build Automation** - Automatic dependency installation and building
+## Core Features
+
+- **Local Deployments** - Deploy applications with auto-generated subdomains
+- **SSL Certificates** - Automatic HTTPS with Let's Encrypt integration
+- **Process Management** - PM2-based application lifecycle management
+- **Framework Support** - Next.js, React, Vue, Node.js, Python, PHP, and more
+- **Resource Monitoring** - Real-time CPU, memory, and disk usage tracking
+- **Infrastructure Automation** - One-command setup for nginx, SSL, and services
 
 ## Commands
 
 ### Authentication
 ```bash
-forge login          # Authenticate with Forge platform
-forge signup         # Create new account
+forge login                     # Login to your account
+forge signup                    # Create new account
 ```
 
 ### Deployment
 ```bash
-forge deploy [source]           # Deploy app from repo or directory
-forge deploy --subdomain name  # Custom subdomain
-forge deploy --skip-build      # Skip build step
-forge deploy --force           # Force deployment on errors
+forge deploy [source]           # Deploy from repository or directory
+forge deploy --subdomain name   # Use custom subdomain
+forge status                    # View all deployments
+forge info [deployment-id]      # Detailed deployment information
+forge logs [deployment-id]      # View application logs
+forge stop [deployment-id]      # Stop deployment
 ```
 
-### Management
+### Infrastructure
 ```bash
-forge status                    # Check all deployments
-forge status --all              # Show all deployments
-forge logs [deployment-id]     # View deployment logs
-forge stop [deployment-id]     # Stop deployment
-```
-
-### Infrastructure (Requires Admin/Sudo)
-```bash
-forge infra --all              # Setup all infrastructure
-forge infra --pm2              # Setup PM2 process manager
-forge infra --nginx            # Setup Nginx reverse proxy (requires sudo)
-forge infra --nodejs           # Setup Node.js dependencies (serve, etc.)
-forge infra --python           # Setup Python dependencies (uvicorn, gunicorn)
-forge infra --service          # Setup auto-restart service
-```
-
-### Service Management
-```bash
-forge service status           # Check service status
-forge service start            # Start service
-forge service stop             # Stop service
-forge service enable           # Enable auto-start
+forge infra --all               # Setup complete infrastructure
+forge infra --nginx             # Configure nginx reverse proxy
+forge infra --ssl               # Setup SSL certificates
+forge service status            # Check service status
 ```
 
 ## Infrastructure Setup
 
-The CLI automatically sets up:
+Forge automatically configures:
 
-1. **PM2** - Process manager for Node.js applications
-2. **Nginx** - Reverse proxy for subdomain routing
-3. **System Service** - Auto-restart on system reboot
+1. **Nginx** - Reverse proxy with per-subdomain configurations
+2. **SSL/TLS** - Automatic certificate generation and renewal
+3. **PM2** - Process management and monitoring
+4. **System Service** - Auto-restart on system boot
 
-### Manual Setup (if needed)
+### Platform-Specific Setup
 
-#### Windows
-- Install nginx: Download from nginx.org, extract to `C:\nginx`
-- PM2 Windows service: `pm2-windows-startup install`
+**Windows**: Requires Administrator privileges for nginx and service installation.
 
-#### Linux
+**Linux/macOS**: Requires `sudo` for system-level configurations.
+
 ```bash
-sudo apt-get install nginx      # Install nginx
-sudo systemctl enable nginx     # Enable nginx
-forge infra --all              # Setup Forge infrastructure
-```
+# Linux/macOS
+sudo forge infra --all
 
-## Configuration
-
-### DNS Setup
-Point your domain to your server IP:
-```
-*.forgecli.tech → YOUR_SERVER_IP
-```
-
-### Firewall
-Open required ports:
-```bash
-# Windows
-netsh advfirewall firewall add rule name="HTTP" dir=in action=allow protocol=TCP localport=80
-netsh advfirewall firewall add rule name="HTTPS" dir=in action=allow protocol=TCP localport=443
-
-# Linux
-sudo ufw allow 80
-sudo ufw allow 443
+# Windows (Run as Administrator)
+forge infra --all
 ```
 
 ## Supported Frameworks
 
-- **Frontend**: React, Vue, Angular, Next.js, Nuxt, Svelte
-- **Backend**: Node.js (Express, Fastify, NestJS), Python (Django, Flask, FastAPI), PHP (Laravel, Symfony)
-- **Static**: HTML/CSS/JS sites
+| Category | Frameworks |
+|----------|------------|
+| Frontend | React, Vue, Angular, Next.js, Nuxt, Svelte |
+| Backend | Node.js, Express, NestJS, Python, Django, Flask, FastAPI |
+| Static | HTML/CSS/JS, Jekyll, Hugo |
 
-## Examples
+## Example Usage
 
-### Deploy Next.js App
 ```bash
-forge deploy https://github.com/vercel/next.js/tree/canary/examples/hello-world
+# Deploy a calculator app
+forge deploy https://github.com/HarshitKumar9030/Advanced-Calculator
+
+# Deploy with custom subdomain
+forge deploy --subdomain calculator https://github.com/HarshitKumar9030/Advanced-Calculator
+
+# Deploy local project
+forge deploy ./my-project
+
+# Monitor deployment
+forge info deployment-id
 ```
 
-### Deploy React App
-```bash
-forge deploy https://github.com/facebook/create-react-app
+## Configuration
+
+DNS configuration is managed automatically. Your applications will be accessible at:
+```
+https://subdomain.forgecli.tech
 ```
 
-### Deploy from Local Directory
-```bash
-cd my-project
-forge deploy .
-```
-
-### Custom Subdomain
-```bash
-forge deploy --subdomain my-app https://github.com/username/repo
-```
+Required firewall ports:
+- **80** (HTTP)
+- **443** (HTTPS)
 
 ## Troubleshooting
 
-### Permission Issues
+### Common Issues
 
-#### "EACCES: permission denied" when setting up nginx
+**Permission Denied**: Run with administrator/sudo privileges
 ```bash
-# Linux/macOS: Run with sudo
-sudo forge infra --nginx
-
-# Windows: Run PowerShell as Administrator
-# Right-click PowerShell → "Run as administrator"
-forge infra --nginx
+sudo forge infra --all    # Linux/macOS
+# Run as Administrator     # Windows
 ```
 
-#### Global npm package permissions
+**Port Conflicts**: Check and stop conflicting deployments
 ```bash
-# Linux/macOS: Fix npm permissions or use sudo
-sudo npm install -g forge-deploy-cli
-
-# Windows: Run Command Prompt as Administrator
-npm install -g forge-deploy-cli
+forge status
+forge stop deployment-id
 ```
 
-### Port Conflicts
+**Service Issues**: Restart infrastructure services
 ```bash
-forge status                    # Check running deployments
-forge stop <deployment-id>     # Stop conflicting deployment
+forge service status
+pm2 restart all
+sudo systemctl restart nginx
 ```
 
-### Service Issues
+### Getting Help
+
+View detailed logs:
 ```bash
-forge service status           # Check service status
-pm2 list                       # Check PM2 processes
-nginx -t                       # Test nginx configuration
+forge logs deployment-id       # Application logs
+forge info deployment-id       # Deployment details
 ```
-
-### Infrastructure Issues
-```bash
-# Check if PM2 is properly installed
-pm2 --version
-
-# Check nginx status
-sudo systemctl status nginx     # Linux
-nginx -v                        # Check if installed
-
-# Reinstall infrastructure
-sudo forge infra --all
-```
-
-### Logs
-```bash
-forge logs <deployment-id>     # Application logs
-pm2 logs                       # PM2 logs
-sudo journalctl -u nginx       # Nginx logs (Linux)
-tail -f /var/log/nginx/error.log # Nginx error logs
-```
-
-## License
-
-MIT
 
 ## Support
 
-For issues and documentation: [GitHub Repository](https://github.com/harshitkumar9030/cli)
+- **Email**: [harshitkumar9030@gmail.com](mailto:harshitkumar9030@gmail.com)
+- **Documentation**: [https://forgecli.tech/docs](https://forgecli.tech/docs)
+- **Issues**: [GitHub Repository](https://github.com/HarshitKumar9030/cli)
+
+## License
+
+MIT License - see LICENSE file for details.
