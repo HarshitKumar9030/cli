@@ -416,49 +416,49 @@ export class WorkspaceManager {
     if (dependencies['next'] || scripts['next:build']) {
       steps.push({
         name: 'Next.js Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 600
       });
     } else if (dependencies['vite'] || scripts['vite:build']) {
       steps.push({
         name: 'Vite Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 300
       });
     } else if (dependencies['@angular/cli'] || scripts['ng:build']) {
       steps.push({
         name: 'Angular Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 600
       });
     } else if (dependencies['vue'] && dependencies['@vue/cli-service']) {
       steps.push({
         name: 'Vue CLI Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 300
       });
     } else if (dependencies['react-scripts']) {
       steps.push({
         name: 'Create React App Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 300
       });
     } else if (dependencies['nuxt'] || dependencies['nuxt3']) {
       steps.push({
         name: 'Nuxt Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 600
       });
     } else if (dependencies['svelte'] && dependencies['@sveltejs/kit']) {
       steps.push({
         name: 'SvelteKit Build',
-        command: scripts.build || `${this.packageManager} run build`,
+        command: `${this.packageManager} run build`,
         optional: false,
         timeout: 300
       });
