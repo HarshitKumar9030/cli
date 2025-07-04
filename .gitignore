@@ -1,2 +1,6 @@
 node_modules
 /dist
+/logs
+forge-deployments.json
+forge-ecosystem.config.js
+*.log

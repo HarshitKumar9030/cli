@@ -321,11 +321,44 @@ export const deployCommand = new Command('deploy')
           
           console.log(chalk.green('Local deployment started successfully!'));
           
-          // Start API server for remote monitoring
-          console.log(chalk.cyan('Starting monitoring API server...'));
+          // Start or ensure API server is running for remote monitoring
+          console.log(chalk.cyan('Ensuring monitoring API server is running...'));
           try {
-            await startAPIServer();
-            console.log(chalk.green('API server started on port 8080'));
+            // Check if API server is already running
+            const healthCheck = await fetch('http://localhost:8080/health', {
+              signal: AbortSignal.timeout(2000)
+            }).catch(() => null);
+
+            if (healthCheck?.ok) {
+              console.log(chalk.green('API server is already running'));
+            } else {
+              // Try to start with PM2 first
+              try {
+                execSync('pm2 describe forge-api-server', { stdio: 'ignore' });
+                // Server exists but might be stopped
+                execSync('pm2 restart forge-api-server', { stdio: 'ignore' });
+                console.log(chalk.green('API server restarted with PM2'));
+              } catch {
+                // Server doesn't exist, start it
+                const currentDir = process.cwd();
+                const cliDir = path.dirname(path.dirname(__filename));
+                
+                try {
+                  // Change to CLI directory and start server
+                  process.chdir(cliDir);
+                  execSync('npm run build', { stdio: 'ignore' });
+                  execSync('npm run server:start', { stdio: 'ignore' });
+                  console.log(chalk.green('API server started with PM2'));
+                } catch (pm2Error) {
+                  // Fallback to direct start
+                  await startAPIServer();
+                  console.log(chalk.green('API server started (direct mode)'));
+                } finally {
+                  // Restore original directory
+                  process.chdir(currentDir);
+                }
+              }
+            }
           } catch (error) {
             console.log(chalk.yellow('Warning: Could not start API server:', error));
           }

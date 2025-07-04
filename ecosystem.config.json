@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "forge-api-server",
+      "script": "./dist/server.js",
+      "cwd": "./",
+      "instances": 1,
+      "exec_mode": "fork",
+      "watch": false,
+      "max_memory_restart": "500M",
+      "env": {
+        "NODE_ENV": "production",
+        "PORT": "8080"
+      },
+      "log_file": "./logs/api-server.log",
+      "out_file": "./logs/api-server-out.log",
+      "error_file": "./logs/api-server-error.log",
+      "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
+      "merge_logs": true,
+      "autorestart": true,
+      "max_restarts": 10,
+      "min_uptime": "10s",
+      "restart_delay": 4000
+    }
+  ]
+}

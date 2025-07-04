@@ -1,7 +1,7 @@
 {
   "name": "forge-deploy-cli",
   "version": "2.2.0",
-  "description": "A powerful CLI for local deployments with automatic subdomain routing, PM2 process management, and Nginx reverse proxy setup",
+  "description": "Professional CLI for local deployments with automatic subdomain routing, SSL certificates, and infrastructure management",
   "main": "dist/index.js",
   "bin": {
     "forge": "dist/index.js"
@@ -10,11 +10,19 @@
     "build": "tsc",
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
+    "server": "node dist/server.js",
+    "server:dev": "ts-node src/server.ts",
+    "server:start": "pm2 start ecosystem.config.json",
+    "server:stop": "pm2 stop forge-api-server",
+    "server:restart": "pm2 restart forge-api-server",
+    "server:status": "pm2 status forge-api-server",
+    "server:logs": "pm2 logs forge-api-server",
+    "server:monitor": "pm2 monit",
     "test": "jest",
     "prepare": "npm run build",
     "link": "npm link",
     "prepublishOnly": "npm run build",
-    "postinstall": "echo '\n🚀 Forge CLI installed successfully!\n\nGet started:\n  forge infra --all    # Setup infrastructure\n  forge login          # Authenticate\n  forge deploy <repo>  # Deploy your app\n\nDocs: https://github.com/forge-team/forge-cli#readme\n'"
+    "postinstall": "echo '\n🚀 Forge CLI installed successfully!\n\nGet started:\n  forge infra --all       # Setup infrastructure\n  forge login             # Authenticate\n  forge deploy https://github.com/HarshitKumar9030/Advanced-Calculator\n\nAPI Server (for monitoring):\n  forge server start      # Start persistent API server\n  forge server status     # Check server status\n\nDocs: https://forgecli.tech/docs\nSupport: harshitkumar9030@gmail.com\n'"
   },
   "keywords": [
     "forge",
@@ -30,7 +38,7 @@
     "infrastructure",
     "automation"
   ],
-  "author": "Forge Team",
+  "author": "Harshit Kumar <harshitkumar9030@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",

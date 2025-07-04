@@ -17,6 +17,7 @@ import { pauseCommand } from './commands/pause';
 import { resumeCommand } from './commands/resume';
 import { infraCommand } from './commands/infra';
 import { workspaceCommand } from './commands/workspace';
+import { serverCommand } from './commands/server';
 import { AutoRestartService } from './services/autoRestart';
 import { checkVersion } from './utils/version';
 
@@ -50,6 +51,7 @@ if (process.argv.includes('--service')) {
   program.addCommand(resumeCommand);
   program.addCommand(infraCommand);
   program.addCommand(workspaceCommand);
+  program.addCommand(serverCommand);
 
   // Commands that export functions need to be wrapped
   program
