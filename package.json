@@ -1,6 +1,6 @@
 {
   "name": "forge-deploy-cli",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Professional CLI for local deployments with automatic subdomain routing, SSL certificates, and infrastructure management",
   "main": "dist/index.js",
   "bin": {
