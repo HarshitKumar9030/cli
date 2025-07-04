@@ -7,6 +7,7 @@ import { loginCommand } from './commands/login';
 import { signupCommand } from './commands/signup';
 import { deployCommand } from './commands/deploy';
 import { statusCommand } from './commands/status';
+import { infoCommand } from './commands/info';
 import { logsCommand } from './commands/logs';
 import { configCommand } from './commands/config';
 import { setupCommand } from './commands/setup';
@@ -75,6 +76,14 @@ if (process.argv.includes('--service')) {
     .description('Check deployment status')
     .option('-d, --deployment-id <id>', 'Specific deployment ID')
     .action(statusCommand);
+
+  program
+    .command('info')
+    .description('Get detailed deployment information')
+    .option('-d, --deployment-id <id>', 'Specific deployment ID')
+    .option('-l, --local', 'Show local deployment info')
+    .option('-j, --json', 'Output in JSON format')
+    .action(infoCommand);
 
   program.parse();
 

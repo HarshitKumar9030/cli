@@ -83,7 +83,15 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
     if (localDeployments.length === 0) {
       console.log(chalk.gray('  No local deployments found'));
     } else {
-      localDeployments.forEach(localDep => {
+      // Update resource usage for all local deployments
+      for (const localDep of localDeployments) {
+        await LocalDeploymentManager.updateDeploymentResources(localDep.id);
+      }
+      
+      // Get updated deployments with fresh resource data
+      const updatedLocalDeployments = await LocalDeploymentManager.listDeployments();
+      
+      updatedLocalDeployments.forEach(localDep => {
         const localStatusColor = getLocalStatusColor(localDep.status);
         
         console.log(chalk.white.bold(`  ${localDep.projectName} (${localDep.id})`));
@@ -101,6 +109,13 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
           console.log(chalk.gray(`    Process ID: ${localDep.pid}`));
         }
 
+        // Show resource usage if available
+        if (localDep.resources) {
+          const { cpu, memory, diskUsed, diskUsagePercent } = localDep.resources;
+          console.log(chalk.gray(`    CPU: ${cpu.toFixed(1)}% | Memory: ${memory.toFixed(1)}%`));
+          console.log(chalk.gray(`    Disk: ${(diskUsed / (1024 * 1024 * 1024)).toFixed(2)}GB (${diskUsagePercent.toFixed(1)}% of 15GB limit)`));
+        }
+
         // Show available actions based on status
         if (localDep.status === 'running') {
           console.log(chalk.blue(`    Actions: forge pause ${localDep.id} | forge stop ${localDep.id}`));
@@ -113,6 +128,12 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
         console.log();
       });
     }
+
+    console.log(chalk.blue('Web Interface:'));
+    console.log(chalk.gray('  For detailed deployment information with web interface:'));
+    console.log(chalk.cyan('  Visit: https://forgecli.tech/deployments'));
+    console.log(chalk.gray('  Or use: forge info --id <deployment-id>'));
+    console.log();
 
   } catch (error) {
     console.error(chalk.red('Failed to fetch status:'), error instanceof Error ? error.message : error);

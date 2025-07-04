@@ -8,6 +8,7 @@ import { ConfigService } from '../services/config';
 import { ForgeApiService } from '../services/api';
 import { GitService } from '../services/git';
 import { LocalDeploymentManager } from '../services/localDeployment';
+import { startAPIServer } from '../services/apiServer';
 import { getSystemIP, getPublicIP, checkSystemPrivileges } from '../utils/system';
 import { Framework } from '../types';
 
@@ -247,6 +248,16 @@ export const deployCommand = new Command('deploy')
           });
           
           console.log(chalk.green('Local deployment started successfully!'));
+          
+          // Start API server for remote monitoring
+          console.log(chalk.cyan('Starting monitoring API server...'));
+          try {
+            await startAPIServer();
+            console.log(chalk.green('API server started on port 8080'));
+          } catch (error) {
+            console.log(chalk.yellow('Warning: Could not start API server:', error));
+          }
+          
           console.log();
           console.log(chalk.blue('📁 Project Information:'));
           console.log(`  ${chalk.cyan('Project Path:')} ${projectPath}`);

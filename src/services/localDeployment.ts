@@ -19,6 +19,13 @@ export interface LocalDeployment {
   url: string;
   startedAt?: Date;
   lastAccessed?: Date;
+  storageLimit: number; // in bytes (default 15GB)
+  resources?: {
+    cpu: number;
+    memory: number;
+    diskUsed: number; // in bytes
+    diskUsagePercent: number;
+  };
 }
 
 export class LocalDeploymentManager {
@@ -52,6 +59,7 @@ export class LocalDeploymentManager {
 
       // Create deployment record
       const localIP = getSystemIP();
+      const storageLimit = 15 * 1024 * 1024 * 1024; // 15GB in bytes
       const deployment: LocalDeployment = {
         id: deploymentData.id,
         projectName: deploymentData.projectName,
@@ -60,7 +68,8 @@ export class LocalDeploymentManager {
         projectPath: deploymentData.projectPath,
         port,
         status: 'stopped',
-        url: `http://${deploymentData.subdomain}.${this.BASE_DOMAIN}`
+        url: `http://${deploymentData.subdomain}.${this.BASE_DOMAIN}`,
+        storageLimit
       };
 
       // Start the application
@@ -278,6 +287,11 @@ export class LocalDeploymentManager {
       deployment.status = 'running';
       deployment.startedAt = new Date();
 
+      // Wait a moment for PM2 to start monitoring, then calculate initial resources
+      setTimeout(async () => {
+        await this.updateDeploymentResources(deployment.id);
+      }, 2000);
+
       console.log(chalk.green(`Application started with PM2 on port ${port}`));
 
     } catch (error) {
@@ -286,9 +300,6 @@ export class LocalDeploymentManager {
     }
   }
 
-  /**
-   * Stop a local deployment using PM2
-   */
   static async stopDeployment(deploymentId: string): Promise<void> {
     const deployment = await this.getDeployment(deploymentId);
     if (!deployment) {
@@ -360,9 +371,7 @@ export class LocalDeploymentManager {
     }
   }
 
-  /**
-   * List all local deployments
-   */
+
   static async listDeployments(): Promise<LocalDeployment[]> {
     try {
       if (!await fs.pathExists(this.DEPLOYMENTS_FILE)) {
@@ -376,17 +385,12 @@ export class LocalDeploymentManager {
     }
   }
 
-  /**
-   * Get a specific deployment
-   */
   static async getDeployment(deploymentId: string): Promise<LocalDeployment | null> {
     const deployments = await this.listDeployments();
     return deployments.find(d => d.id === deploymentId) || null;
   }
 
-  /**
-   * Save deployment to file
-   */
+ 
   static async saveDeployment(deployment: LocalDeployment): Promise<void> {
     const deployments = await this.listDeployments();
     const index = deployments.findIndex(d => d.id === deployment.id);
@@ -400,9 +404,7 @@ export class LocalDeploymentManager {
     await fs.writeJSON(this.DEPLOYMENTS_FILE, deployments, { spaces: 2 });
   }
 
-  /**
-   * Find an available port
-   */
+ 
   private static async findAvailablePort(): Promise<number> {
     const net = await import('net');
     
@@ -415,9 +417,7 @@ export class LocalDeploymentManager {
     throw new Error('No available ports found');
   }
 
-  /**
-   * Check if port is available
-   */
+
   private static async isPortAvailable(port: number): Promise<boolean> {
     return new Promise((resolve) => {
       const net = require('net');
@@ -432,9 +432,7 @@ export class LocalDeploymentManager {
     });
   }
 
-  /**
-   * Install serve package if not available
-   */
+
   static async ensureServeInstalled(): Promise<void> {
     try {
       execSync('npx serve --version', { stdio: 'pipe' });
@@ -444,9 +442,7 @@ export class LocalDeploymentManager {
     }
   }
 
-  /**
-   * Clean up stopped deployments
-   */
+ 
   static async cleanup(): Promise<void> {
     const deployments = await this.listDeployments();
     const activeDeployments = deployments.filter(deployment => {
@@ -468,9 +464,7 @@ export class LocalDeploymentManager {
     await fs.writeJSON(this.DEPLOYMENTS_FILE, activeDeployments, { spaces: 2 });
   }
 
-  /**
-   * Get deployment status with health check
-   */
+
   static async getDeploymentStatus(deploymentId: string): Promise<LocalDeployment | null> {
     const deployment = await this.getDeployment(deploymentId);
     if (!deployment) return null;
@@ -497,9 +491,7 @@ export class LocalDeploymentManager {
     return deployment;
   }
 
-  /**
-   * Ensure PM2 is installed
-   */
+ 
   private static async ensurePM2Installed(): Promise<void> {
     try {
       execSync('pm2 --version', { stdio: 'pipe' });
@@ -520,20 +512,15 @@ export class LocalDeploymentManager {
     }
   }
 
-  /**
-   * Setup nginx configuration for the deployment
-   */
+  
   private static async setupNginxConfig(deployment: LocalDeployment, sslConfigured: boolean = false): Promise<void> {
     const { subdomain, port } = deployment;
     
     try {
-      // Ensure nginx config directory exists
       await fs.ensureDir(this.NGINX_CONFIG_DIR);
       
-      // Ensure main nginx.conf includes forge-sites directory
       await this.ensureMainNginxConfig();
       
-      // Generate nginx configuration for this specific subdomain
       const nginxConfig = this.generateNginxConfig(subdomain, port, sslConfigured);
       
       const configPath = path.join(this.NGINX_CONFIG_DIR, `${subdomain}.conf`);
@@ -541,9 +528,7 @@ export class LocalDeploymentManager {
       
       console.log(chalk.gray(`Nginx config created: ${configPath}`));
       
-      // Test configuration before applying
       if (await this.testNginxConfig()) {
-        // Reload nginx if running
         await this.reloadNginx();
         console.log(chalk.green('Nginx configuration applied successfully'));
       } else {
@@ -556,14 +541,11 @@ export class LocalDeploymentManager {
     }
   }
 
-  /**
-   * Generate nginx configuration for a specific subdomain deployment with per-subdomain SSL support
-   */
+ 
   private static generateNginxConfig(subdomain: string, port: number, sslConfigured: boolean = false): string {
     const domain = `${subdomain}.forgecli.tech`;
     
     if (!sslConfigured) {
-      // Simple HTTP-only configuration
       return `# Forge deployment configuration for ${subdomain}
 # Generated on ${new Date().toISOString()}
 # HTTP-only configuration
@@ -949,9 +931,6 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
       
       console.log(chalk.green(`SSL setup completed for ${domain}`));
       
-      // Verify SSL is working
-      await this.verifySSLConfiguration(domain);
-      
       return true;
       
     } catch (error) {
@@ -1051,11 +1030,9 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
           console.log(chalk.green(`SSL certificate successfully obtained for ${domain} (standalone method)`));
           
         } catch (standaloneError) {
-          // Make sure nginx is running even if standalone fails
           try {
             execSync('systemctl start nginx', { stdio: 'pipe' });
           } catch {
-            // Ignore if nginx was already running
           }
           
           throw new Error(`All certificate methods failed. Latest error: ${standaloneError}`);
@@ -1064,9 +1041,7 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
     }
   }
 
-  /**
-   * Update Cloudflare DNS record for subdomain via API
-   */
+
   private static async updateCloudflareRecord(deploymentId: string, publicIP: string): Promise<void> {
     try {
       console.log(chalk.gray(`Updating DNS record for deployment ${deploymentId} -> ${publicIP} via API...`));
@@ -1100,115 +1075,245 @@ error_log /var/log/nginx/${subdomain}_error.log warn;
     }
   }
 
+  
+  static async calculateResourceUsage(deployment: LocalDeployment): Promise<{
+    cpu: number;
+    memory: number;
+    diskUsed: number;
+    diskUsagePercent: number;
+  }> {
+    let resources = {
+      cpu: 0,
+      memory: 0,
+      diskUsed: 0,
+      diskUsagePercent: 0
+    };
+
+    try {
+      // Calculate disk usage for the project directory
+      const diskUsed = await this.getDirectorySize(deployment.projectPath);
+      const diskUsagePercent = (diskUsed / deployment.storageLimit) * 100;
+
+      resources.diskUsed = diskUsed;
+      resources.diskUsagePercent = Math.min(diskUsagePercent, 100);
+
+      // Get PM2 process information for better accuracy
+      const pm2Data = await this.getPM2ProcessData(deployment.id);
+      if (pm2Data) {
+        resources.cpu = pm2Data.cpu;
+        resources.memory = pm2Data.memory;
+        
+        // Update deployment PID and status based on PM2 data
+        deployment.pid = pm2Data.pid;
+        deployment.status = pm2Data.status === 'online' ? 'running' : 
+                          pm2Data.status === 'stopped' ? 'stopped' : 'failed';
+      } else if (deployment.status === 'running') {
+        // Fallback to process monitoring if PM2 data unavailable
+        await this.getFallbackProcessData(deployment, resources);
+      }
+
+    } catch (error) {
+      console.log(chalk.yellow(`Warning: Could not calculate resource usage: ${error}`));
+    }
+
+    return resources;
+  }
+
   /**
-   * Get the appropriate interpreter for PM2 based on the start script
+   * Get directory size in bytes
    */
-  private static getInterpreter(startScript: string, interpreter: string): string | undefined {
-    // Handle npx commands
-    if (startScript.startsWith('npx')) {
-      return undefined; // Node.js default for npx
+  private static async getDirectorySize(dirPath: string): Promise<number> {
+    let totalSize = 0;
+
+    try {
+      const stat = await fs.stat(dirPath);
+      
+      if (stat.isFile()) {
+        return stat.size;
+      }
+
+      if (stat.isDirectory()) {
+        const items = await fs.readdir(dirPath);
+        
+        for (const item of items) {
+          if (item === 'node_modules' || item === '.git' || item === 'dist' || item === 'build' || item === '__pycache__') {
+            continue;
+          }
+          
+          const itemPath = path.join(dirPath, item);
+          try {
+            totalSize += await this.getDirectorySize(itemPath);
+          } catch (error) {
+            continue;
+          }
+        }
+      }
+    } catch (error) {
+      return 0;
+    }
+
+    return totalSize;
+  }
+
+  /**
+   * Update deployment with real-time resource usage
+   */
+  static async updateDeploymentResources(deploymentId: string): Promise<void> {
+    const deployment = await this.getDeployment(deploymentId);
+    if (!deployment) return;
+
+    const resources = await this.calculateResourceUsage(deployment);
+    deployment.resources = resources;
+
+    await this.saveDeployment(deployment);
+  }
+
+  /**
+   * Get process data from PM2 for accurate resource monitoring
+   */
+  private static async getPM2ProcessData(deploymentId: string): Promise<{
+    cpu: number;
+    memory: number;
+    pid: number;
+    status: string;
+  } | null> {
+    try {
+      const appName = `forge-${deploymentId}`;
+      const pm2List = execSync('pm2 jlist', { encoding: 'utf8', stdio: 'pipe' });
+      const processes = JSON.parse(pm2List);
+      
+      const process = processes.find((proc: any) => proc.name === appName);
+      if (process) {
+        // Get system memory for percentage calculation
+        const totalMemoryGB = os.totalmem() / (1024 * 1024 * 1024);
+        const usedMemoryMB = parseFloat(process.monit?.memory?.toString() || '0') / (1024 * 1024);
+        const memoryPercent = (usedMemoryMB / (totalMemoryGB * 1024)) * 100;
+
+        return {
+          cpu: parseFloat(process.monit?.cpu?.toString() || '0'),
+          memory: Math.min(memoryPercent, 100),
+          pid: process.pid || 0,
+          status: process.pm2_env?.status || 'unknown'
+        };
+      }
+    } catch (error) {
+      // PM2 might not be available or process doesn't exist
+    }
+    return null;
+  }
+
+  /**
+   * Fallback process monitoring for non-PM2 processes
+   */
+  private static async getFallbackProcessData(deployment: LocalDeployment, resources: any): Promise<void> {
+    if (!deployment.pid) return;
+
+    try {
+      if (os.platform() === 'win32') {
+        // Windows process monitoring
+        const output = execSync(`wmic process where processid=${deployment.pid} get PageFileUsage,WorkingSetSize /format:csv`, { encoding: 'utf8', stdio: 'pipe' });
+        const lines = output.split('\n').filter(line => line.trim() && !line.startsWith('Node'));
+        if (lines.length > 0) {
+          const parts = lines[0].split(',');
+          if (parts.length >= 3) {
+            // Memory usage in KB, convert to percentage based on total system memory
+            const memoryKB = parseInt(parts[1]) || 0;
+            const totalMemoryKB = os.totalmem() / 1024;
+            resources.memory = Math.min((memoryKB / totalMemoryKB) * 100, 100);
+          }
+        }
+      } else {
+        // Linux/macOS process monitoring using ps
+        const output = execSync(`ps -p ${deployment.pid} -o %cpu,%mem --no-headers`, { encoding: 'utf8', stdio: 'pipe' });
+        const parts = output.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          resources.cpu = Math.min(parseFloat(parts[0]) || 0, 100);
+          resources.memory = Math.min(parseFloat(parts[1]) || 0, 100);
+        }
+      }
+    } catch (error) {
+      // Process might not exist anymore, mark as stopped
+      deployment.status = 'stopped';
+      deployment.pid = undefined;
+    }
+  }
+
+  /**
+   * Get real deployment data for API usage
+   */
+  static async getDeploymentWithResources(deploymentId: string): Promise<LocalDeployment | null> {
+    const deployment = await this.getDeployment(deploymentId);
+    if (!deployment) return null;
+
+    // Update resources with real-time data
+    await this.updateDeploymentResources(deploymentId);
+    return await this.getDeployment(deploymentId);
+  }
+
+  /**
+   * Check if a file exists in the project directory
+   */
+  private static async hasFile(projectPath: string, fileName: string): Promise<boolean> {
+    const filePath = path.join(projectPath, fileName);
+    return await fs.pathExists(filePath);
+  }
+
+  /**
+   * Get interpreter for PM2 process
+   */
+  private static getInterpreter(startScript: string, interpreter: string): string {
+    if (interpreter === 'none') {
+      return 'none';
     }
     
-    if (startScript.startsWith('npm') || startScript.startsWith('node')) {
-      return undefined; // Node.js default
+    if (startScript.includes('python')) {
+      return 'python';
     }
     
-    if (interpreter === 'python') {
-      return 'python3';
+    if (startScript.includes('uvicorn')) {
+      return 'none';
     }
     
-    if (interpreter === 'none' || startScript.startsWith('uvicorn') || startScript.startsWith('gunicorn')) {
-      return undefined; // uvicorn/gunicorn are standalone executables
-    }
-    
-    return interpreter === 'node' ? undefined : interpreter;
+    return 'node';
   }
 
   /**
    * Get environment variables for different frameworks
    */
   private static getEnvironmentVariables(framework: Framework, port: number): Record<string, string> {
-    const baseEnv = {
+    const env: Record<string, string> = {
       PORT: port.toString(),
+      NODE_ENV: 'production'
     };
 
     switch (framework) {
       case Framework.NEXTJS:
+        env.NEXT_TELEMETRY_DISABLED = '1';
+        break;
+      
       case Framework.REACT:
       case Framework.VUE:
-      case Framework.VITE:
       case Framework.ANGULAR:
-      case Framework.EXPRESS:
-      case Framework.FASTIFY:
-      case Framework.NEST:
-        return {
-          ...baseEnv,
-          NODE_ENV: 'production'
-        };
-
-      case Framework.DJANGO:
-        return {
-          ...baseEnv,
-          DJANGO_SETTINGS_MODULE: 'settings',
-          PYTHONPATH: '.',
-          PYTHONUNBUFFERED: '1'
-        };
-
+      case Framework.VITE:
+        env.VITE_PORT = port.toString();
+        break;
+      
       case Framework.FLASK:
-        return {
-          ...baseEnv,
-          FLASK_APP: 'app.py',
-          FLASK_ENV: 'production',
-          PYTHONPATH: '.',
-          PYTHONUNBUFFERED: '1'
-        };
-
+        env.FLASK_APP = 'app.py';
+        env.FLASK_ENV = 'production';
+        env.FLASK_RUN_HOST = '0.0.0.0';
+        env.FLASK_RUN_PORT = port.toString();
+        break;
+      
+      case Framework.DJANGO:
+        env.DJANGO_SETTINGS_MODULE = 'settings';
+        break;
+      
       case Framework.FASTAPI:
-        return {
-          ...baseEnv,
-          PYTHONPATH: '.',
-          PYTHONUNBUFFERED: '1'
-        };
-
-      default:
-        return baseEnv;
+        env.PYTHONPATH = '.';
+        break;
     }
-  }
 
-  /**
-   * Check if a file exists in the project directory
-   */
-  private static async hasFile(projectPath: string, filename: string): Promise<boolean> {
-    const fs = await import('fs-extra');
-    const filePath = path.join(projectPath, filename);
-    return await fs.pathExists(filePath);
-  }
-
-  /**
-   * Verify SSL configuration is working
-   */
-  private static async verifySSLConfiguration(domain: string): Promise<void> {
-    console.log(chalk.gray('Verifying SSL configuration...'));
-    
-    try {
-      // Give nginx time to reload
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Test HTTPS endpoint
-      const response = await fetch(`https://${domain}/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(10000)
-      });
-      
-      if (response.ok) {
-        console.log(chalk.green('✅ SSL configuration verified - HTTPS is working'));
-      } else {
-        console.log(chalk.yellow('⚠️  HTTPS endpoint returned non-200 status'));
-      }
-      
-    } catch (error) {
-      console.log(chalk.yellow(`⚠️  SSL verification failed: ${error}`));
-      console.log(chalk.gray('SSL certificate may be valid but application not responding'));
-    }
+    return env;
   }
 }
